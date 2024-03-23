@@ -6,6 +6,7 @@
 /// [Visual guide](https://tls13.xargs.org/)
 mod alert;
 mod extensions;
+mod tls_record;
 
 use alert::Alert;
 use extensions::{
@@ -18,82 +19,28 @@ use std::io::{self, Read as SocketRead, Write as SocketWrite};
 use std::net::TcpStream;
 
 // use rand::RngCore;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use rand::rngs::OsRng;
+use tls_record::{ContentType, TLSPlaintext, TLSRecord};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 type ProtocolVersion = u16;
 type Random = [u8; 32];
-type CipherSuite = [u8; 2];
 
 const TLS_VERSION_COMPATIBILITY: ProtocolVersion = 0x0303;
 const TLS_VERSION_1_3: ProtocolVersion = 0x0304;
 
 /// ## Cipher Suites
+/// TLS 1.3 supports only five different cipher suites
 /// Our client primarily supports ChaCha20-Poly1305 with SHA-256
 /// See more [here.](https://datatracker.ietf.org/doc/html/rfc8446#appendix-B.4)
-
-const TLS_AES_128_GCM_SHA256: CipherSuite = [0x13, 0x01];
-const TLS_AES_256_GCM_SHA384: CipherSuite = [0x13, 0x02];
-const TLS_CHACHA20_POLY1305_SHA256: CipherSuite = [0x13, 0x03];
-const TLS_AES_128_CCM_SHA256: CipherSuite = [0x13, 0x04];
-const TLS_AES_128_CCM_8_SHA256: CipherSuite = [0x13, 0x05];
-
-/// [TLS Record Layer](https://datatracker.ietf.org/doc/html/rfc8446#section-5.1)
-/// TLS Record Content Types
-#[derive(Debug, Copy, Clone)]
-enum ContentType {
-    Invalid = 0,
-    ChangeCipherSpec = 20,
-    Alert = 21,
-    Handshake = 22,
-    ApplicationData = 23,
-}
-
-#[derive(Debug, Clone)]
-struct TLSPlaintext {
-    record_type: ContentType,
-    legacy_record_version: ProtocolVersion, // 2 bytes to represent
-    // always 0x0303 for TLS 1.3, except for the first ClientHello where it can be 0x0301
-    length: u16,       // length defined as 2 bytes
-    fragment: Vec<u8>, // fragment of size 'length'
-}
-
-impl TLSPlaintext {
-    fn as_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.push(self.record_type as u8);
-        bytes.extend_from_slice(&self.legacy_record_version.to_be_bytes());
-        bytes.extend_from_slice(&self.length.to_be_bytes());
-        bytes.extend_from_slice(&self.fragment);
-        bytes
-    }
-    fn from_bytes(bytes: &[u8]) -> io::Result<TLSPlaintext> {
-        if bytes.len() < 6 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Invalid TLSPlaintext length",
-            ));
-        }
-        let record_type = match bytes[0] {
-            20 => ContentType::ChangeCipherSpec,
-            21 => ContentType::Alert,
-            22 => ContentType::Handshake,
-            23 => ContentType::ApplicationData,
-            _ => ContentType::Invalid,
-        };
-        let legacy_record_version = u16::from_be_bytes(bytes[1..3].try_into().map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "Invalid TLSPlaintext version")
-        })?);
-        let length = u16::from_be_bytes([bytes[3], bytes[4]]);
-        let fragment = bytes[5..].to_vec();
-        Ok(TLSPlaintext {
-            record_type,
-            legacy_record_version,
-            length,
-            fragment,
-        })
-    }
+mod cipher_suites {
+    pub type CipherSuite = [u8; 2];
+    pub const TLS_AES_128_GCM_SHA256: CipherSuite = [0x13, 0x01];
+    pub const TLS_AES_256_GCM_SHA384: CipherSuite = [0x13, 0x02];
+    pub const TLS_CHACHA20_POLY1305_SHA256: CipherSuite = [0x13, 0x03];
+    pub const TLS_AES_128_CCM_SHA256: CipherSuite = [0x13, 0x04];
+    pub const TLS_AES_128_CCM_8_SHA256: CipherSuite = [0x13, 0x05];
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -114,7 +61,7 @@ enum HandshakeType {
 #[derive(Debug, Clone)]
 enum HandshakeMessage {
     ClientHello(ClientHello),
-    ServerHello,
+    ServerHello(ServerHello),
     EndOfEarlyData,
     EncryptedExtensions,
     CertificateRequest,
@@ -159,12 +106,12 @@ impl AsBytes for Handshake {
 ///       (See Appendix D for details about backward compatibility.)
 #[derive(Clone)]
 struct ClientHello {
-    legacy_version: ProtocolVersion,
-    random: Random,                      // Static 32 bytes, no length prefix
-    legacy_session_id: Vec<u8>,          // length of the data can be 0..32 (1 byte to present)
-    cipher_suites: Vec<CipherSuite>,     // length of the data can be 2..2^16-2 (2 bytes)
+    legacy_version: ProtocolVersion, // 2 bytes to represent
+    random: Random,                  // Static 32 bytes, no length prefix
+    legacy_session_id: Vec<u8>,      // length of the data can be 0..32 (1 byte to present)
+    cipher_suites: Vec<cipher_suites::CipherSuite>, // length of the data can be 2..2^16-2 (2 bytes)
     legacy_compression_methods: Vec<u8>, // length of the data can be 1..2^8-1 (1 byte)
-    extensions: Vec<Extension>,          // length of the data can be 8..2^16-1 (2 bytes to present)
+    extensions: Vec<Extension>,      // length of the data can be 8..2^16-1 (2 bytes to present)
 }
 
 impl ClientHello {
@@ -248,47 +195,67 @@ struct ServerHello {
     random: Random,
     legacy_session_id_echo: Vec<u8>,
     // length of the data can be 0..32
-    cipher_suite: CipherSuite,
+    cipher_suite: cipher_suites::CipherSuite,
     legacy_compression_method: u8,
-    extensions: Vec<Extension>, // length of the data can be 6..2^16-1 (2 bytes to present)
+    // extensions: Vec<Extension>, // length of the data can be 6..2^16-1 (2 bytes to present)
+    extensions: Vec<u8>,
 }
 
-fn parse_tls_record_layer(stream: &mut TcpStream) -> io::Result<TLSPlaintext> {
+/// Generate a new Elliptic Curve Diffie-Hellman key pair
+fn generate_dh_key_pair() -> (EphemeralSecret, PublicKey) {
+    let secret = EphemeralSecret::random_from_rng(OsRng);
+    let public = PublicKey::from(&secret);
+    if log::max_level() == log::LevelFilter::Debug {
+        let public_key_hex: String =
+            public
+                .to_bytes()
+                .iter()
+                .fold(String::new(), |mut output, byte| {
+                    let _ = write!(output, "{byte:02x}");
+                    output
+                });
+        debug!("Public key in hex string format: {public_key_hex}");
+    }
+    (secret, public)
+}
+// fn parse_record_fragment(bytes: TLSPlaintext) -> io::Result<Handshake> {
+// let fragment = bytes.fragment;
+// fragment.reverse();
+// }
+
+fn parse_tls_record_layer(stream: &mut TcpStream) -> io::Result<Box<TLSPlaintext>> {
     // Max size for single block is 2^14 https://datatracker.ietf.org/doc/html/rfc8446#section-5.1
-    let mut buffer = [0; 2 ^ 14];
+    let mut buffer = [0; 16384];
     let mut bytes = Vec::new();
     match stream.read(&mut buffer) {
         Ok(n) => {
             debug!("Received {n} bytes of data.");
             bytes.extend_from_slice(&buffer[..n]);
-            debug!("Data: {bytes:?}");
+            // debug!("Data: {bytes:?}");
             TLSPlaintext::from_bytes(&bytes)
         }
-        // Rust handles buffer overflows with runtime checks
+        // The length MUST NOT exceed 2^14 bytes.  An
+        // endpoint that receives a record that exceeds this length MUST
+        // terminate the connection with a "record_overflow" alert.
         Err(e) => Err(e),
     }
 }
 
 #[allow(clippy::too_many_lines)]
 fn main() {
+    // Get address as command-line argument, e.g. cargo run cloudflare.com:443
+    let args = std::env::args().collect::<Vec<String>>();
+    let address = if args.len() > 1 {
+        args[1].as_str()
+    } else {
+        eprintln!("Usage: {} <address:port>", args[0]);
+        std::process::exit(1);
+    };
     // Creating logger.
     // You can change the level with RUST_LOG environment variable, e.g. RUST_LOG=debug
     env_logger::init();
-
     // X25519 key generation
-    let alice_secret = EphemeralSecret::random_from_rng(OsRng);
-    let alice_public = PublicKey::from(&alice_secret);
-    let public_key_hex: String =
-        alice_public
-            .to_bytes()
-            .iter()
-            .fold(String::new(), |mut output, byte| {
-                let _ = write!(output, "{byte:02x}");
-                output
-            });
-    debug!("Public key in hex string format: {public_key_hex}");
-
-    let address = "cloudflare.com:443";
+    let (_alice_secret, alice_public) = generate_dh_key_pair();
 
     // Generate 32 bytes of random data
     // let seed_random = rand::random::<[u8; 32]>();
@@ -309,7 +276,7 @@ fn main() {
                 legacy_version: TLS_VERSION_COMPATIBILITY,
                 random: seed_random,
                 legacy_session_id: random_session_id.to_vec(),
-                cipher_suites: vec![TLS_CHACHA20_POLY1305_SHA256],
+                cipher_suites: vec![cipher_suites::TLS_CHACHA20_POLY1305_SHA256],
                 legacy_compression_methods: vec![0],
                 extensions: vec![
                     Extension {
@@ -390,7 +357,7 @@ fn main() {
                     info!("The handshake request has been sent...");
                 }
                 Err(e) => {
-                    info!("Failed to send the request: {e}");
+                    error!("Failed to send the request: {e}");
                 }
             }
             // Read the response data into a buffer
@@ -400,25 +367,33 @@ fn main() {
                     match response.record_type {
                         ContentType::Alert => match Alert::from_bytes(&response.fragment) {
                             Ok(alert) => {
-                                println!("Alert received: {alert}");
+                                warn!("Alert received: {alert}");
                             }
                             Err(e) => {
-                                println!("Failed to parse the alert: {e}");
+                                error!("Failed to parse the alert: {e}");
                             }
                         },
+                        // ContentType::Handshake => match parse_record_fragment(*response) {
+                        //     Ok(handshake) => {
+                        //         info!("Handshake message received: {handshake:?}");
+                        //     }
+                        //     Err(e) => {
+                        //         error!("Failed to parse the handshake message: {e}");
+                        //     }
+                        // },
                         _ => {
                             error!("Unexpected response type: {:?}", response.record_type);
                         }
                     }
                 }
                 Err(e) => {
-                    println!("Failed to receive the response: {e}");
+                    error!("Failed to receive the response: {e}");
                 }
             }
             // Additional code to read the response would go here.
         }
         Err(e) => {
-            println!("Failed to connect: {e}");
+            error!("Failed to connect: {e}");
         }
     }
 }

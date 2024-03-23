@@ -5,9 +5,7 @@ pub trait AsBytes {
     fn as_bytes(&self) -> Option<Vec<u8>>;
 }
 
-/// Wrapper for any TLS extension
-/// `extension_data` is any extension that implements `AsBytes` trait to convert the structural
-/// presentation into bytes
+/// `Extension` is wrapper for any TLS extension
 #[derive(Debug, Clone)]
 pub struct Extension {
     pub extension_type: ExtensionType, // Defined maximum value can be 65535, takes 2 bytes to present
@@ -17,6 +15,7 @@ impl AsBytes for Extension {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice((self.extension_type as u16).to_be_bytes().as_ref());
+        // 2 byte length determinant for the `extension_data`
         bytes.extend_from_slice(
             u16::try_from(self.extension_data.len())
                 .ok()?
@@ -164,7 +163,8 @@ impl AsBytes for SignatureScheme {
     //noinspection DuplicatedCode
     fn as_bytes(&self) -> Option<Vec<u8>> {
         match *self as u32 {
-            value if value <= u16::MAX as u32 => Some((value as u16).to_be_bytes().to_vec()),
+            #[allow(clippy::cast_possible_truncation)]
+            value if u16::try_from(value).is_ok() => Some((value as u16).to_be_bytes().to_vec()),
             _ => None,
         }
     }
@@ -219,7 +219,8 @@ impl AsBytes for NamedGroup {
     //noinspection DuplicatedCode
     fn as_bytes(&self) -> Option<Vec<u8>> {
         match *self as u32 {
-            value if value <= u16::MAX as u32 => Some((value as u16).to_be_bytes().to_vec()),
+            #[allow(clippy::cast_possible_truncation)]
+            value if u16::try_from(value).is_ok() => Some((value as u16).to_be_bytes().to_vec()),
             _ => None,
         }
     }
@@ -288,6 +289,52 @@ impl AsBytes for KeyShareClientHello {
         bytes.splice(
             0..0,
             u16::try_from(bytes.len())
+                .ok()?
+                .to_be_bytes()
+                .iter()
+                .copied(),
+        );
+        Some(bytes)
+    }
+}
+/// `key_share` extension data structure in `ServerHello`
+/// Contains only single `KeyShareEntry` when compared to `KeyShareClientHello`
+#[derive(Debug, Clone)]
+pub struct KeyShareServerHello {
+    pub server_share: KeyShareEntry,
+}
+impl AsBytes for KeyShareServerHello {
+    fn as_bytes(&self) -> Option<Vec<u8>> {
+        self.server_share.as_bytes()
+    }
+}
+
+/// Modes for pre-shared key (PSK) key exchange
+/// Client-only
+/// 1 byte to present
+#[derive(Debug, Copy, Clone)]
+pub enum PskKeyExchangeMode {
+    PskKe = 0,
+    PskDheKe = 1,
+}
+/// ## "psk_key_exchange_modes" extension
+/// A client MUST provide a `PskKeyExchangeModes` extension if it
+///  offers a "pre_shared_key" extension.
+#[derive(Debug, Clone)]
+pub struct PskKeyExchangeModes {
+    pub ke_modes: Vec<PskKeyExchangeMode>, // (1 byte to present the length)
+}
+
+impl AsBytes for PskKeyExchangeModes {
+    fn as_bytes(&self) -> Option<Vec<u8>> {
+        let mut bytes = Vec::new();
+        for ke_mode in &self.ke_modes {
+            bytes.push(*ke_mode as u8);
+        }
+        // 1 byte length determinant for `ke_modes`
+        bytes.splice(
+            0..0,
+            u8::try_from(bytes.len())
                 .ok()?
                 .to_be_bytes()
                 .iter()
