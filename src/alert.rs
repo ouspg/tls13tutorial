@@ -5,7 +5,7 @@ enum AlertLevel {
     Warning = 1,
     Fatal = 2,
 }
-/// Allow text representation of the alert level object
+/// Allow textual representation of the alert level object
 impl std::fmt::Display for AlertLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -93,6 +93,7 @@ pub struct Alert {
 }
 
 impl Alert {
+    /// Parse the bytes into an `Alert` struct, data must be 2 bytes long
     pub fn from_bytes(bytes: &[u8]) -> io::Result<Alert> {
         if bytes.len() != 2 {
             return Err(io::Error::new(
@@ -162,6 +163,7 @@ impl std::fmt::Display for Alert {
 
 #[cfg(test)]
 mod tests {
+    // Use the Alert types from the parent module
     use super::*;
 
     #[test]
@@ -178,6 +180,16 @@ mod tests {
         // Invalid alert level
         let bytes = [3, 0];
         assert!(Alert::from_bytes(&bytes).is_err());
+        // More precise tests for specific error just to demonstrate the error handling
+        assert!(matches!(
+            Alert::from_bytes(&bytes),
+            Err(ref e) if e.kind() == io::ErrorKind::InvalidData
+        ));
+        assert!(matches!(
+            Alert::from_bytes(&bytes),
+            Err(ref e) if e.to_string() == "Invalid alert level"
+        ));
+
         // Invalid alert description
         let bytes = [1, 1];
         assert!(Alert::from_bytes(&bytes).is_err());
