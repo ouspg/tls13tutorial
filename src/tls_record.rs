@@ -1,12 +1,16 @@
-use crate::ProtocolVersion;
+use crate::handshake::ProtocolVersion;
+use log::debug;
 use std::io;
+
+const RECORD_FRAGMENT_MAX_SIZE: u16 = 2u16.pow(14);
 
 /// [TLS Record Layer](https://datatracker.ietf.org/doc/html/rfc8446#section-5.1)
 /// TLS Record Content Types
-
+///
 pub trait TLSRecord {
     fn as_bytes(&self) -> Vec<u8>;
-    fn from_bytes(bytes: &[u8]) -> io::Result<Box<Self>>;
+    // Attempts to parse the bytes into a `TLSRecord` struct, returning remaining bytes
+    fn from_bytes(bytes: &[u8]) -> io::Result<(Box<Self>, Vec<u8>)>;
 
     // fn parse_payload(_bytes: &[u8]) -> io::Result<Box<Self>>;
 }
@@ -39,15 +43,16 @@ impl TLSRecord for TLSPlaintext {
         bytes
     }
     /// Parse the bytes into a `TLSPlaintext` struct
-    /// Returns `Result` object with the parsed `TLSPlaintext` object
+    /// Returns `Result` object with the parsed `TLSPlaintext` object and the remaining bytes
     /// `Box` structure is used to wrap the data of the struct into a heap-allocated memory
     /// In stack, only the pointer to the heap memory is stored to make compiler known the size
     /// of the return type in compile-time.
-    fn from_bytes(bytes: &[u8]) -> io::Result<Box<TLSPlaintext>> {
+    /// NOTE The implementation might not be secure...
+    fn from_bytes(bytes: &[u8]) -> io::Result<(Box<TLSPlaintext>, Vec<u8>)> {
         if bytes.len() < 6 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Invalid TLSPlaintext length",
+                format!("TLSPlaintext length too short: {}", bytes.len()),
             ));
         }
         let record_type = match bytes[0] {
@@ -61,13 +66,47 @@ impl TLSRecord for TLSPlaintext {
         let legacy_record_version = u16::from_be_bytes(bytes[1..3].try_into().map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "Invalid TLSPlaintext version")
         })?);
+
+        // Max size for single block is 2^14 https://datatracker.ietf.org/doc/html/rfc8446#section-5.1
+        // The length MUST NOT exceed 2^14 bytes.
+        //  An endpoint that receives a record that exceeds this length MUST
+        //  terminate the connection with a "record_overflow" alert.
         let length = u16::from_be_bytes([bytes[3], bytes[4]]);
+        debug!("TLSPlaintext defined length: {}", length);
+        if length > RECORD_FRAGMENT_MAX_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid TLSPlaintext: record overflow",
+            ));
+        }
         let fragment = bytes[5..].to_vec();
-        Ok(Box::from(TLSPlaintext {
-            record_type,
-            legacy_record_version,
-            length,
-            fragment,
-        }))
+        if fragment.len() > length as usize {
+            let (fragment, remainder) = fragment.split_at(length as usize);
+            Ok((
+                Box::from(TLSPlaintext {
+                    record_type,
+                    legacy_record_version,
+                    length,
+                    fragment: fragment.to_vec(),
+                }),
+                remainder.to_vec(),
+            ))
+        } else {
+            if fragment.len() != length as usize {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "TLSPlaintext: length and fragment size mismatch",
+                ));
+            }
+            Ok((
+                Box::from(TLSPlaintext {
+                    record_type,
+                    legacy_record_version,
+                    length,
+                    fragment,
+                }),
+                vec![],
+            ))
+        }
     }
 }

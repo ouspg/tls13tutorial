@@ -88,7 +88,7 @@ impl std::fmt::Display for AlertDescription {
 #[derive(Debug, Clone, PartialEq, Eq)]
 
 pub struct Alert {
-    level: AlertLevel,
+    level: AlertLevel, // in TLS 1.3 the level is implicit and ignored
     description: AlertDescription,
 }
 
@@ -177,6 +177,9 @@ mod tests {
         let alert = Alert::from_bytes(&bytes).unwrap();
         assert_eq!(alert.level, AlertLevel::Warning);
         assert_eq!(alert.description, AlertDescription::CloseNotify);
+
+        // ## Some negative testing ##
+
         // Invalid alert level
         let bytes = [3, 0];
         assert!(Alert::from_bytes(&bytes).is_err());
@@ -189,7 +192,6 @@ mod tests {
             Alert::from_bytes(&bytes),
             Err(ref e) if e.to_string() == "Invalid alert level"
         ));
-
         // Invalid alert description
         let bytes = [1, 1];
         assert!(Alert::from_bytes(&bytes).is_err());

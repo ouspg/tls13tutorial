@@ -1,4 +1,4 @@
-use crate::ProtocolVersion;
+use crate::handshake::ProtocolVersion;
 
 pub trait AsBytes {
     /// Returns `None` if the length of the data is out of standard constraints, otherwise returns `Some(Vec<u8>)`

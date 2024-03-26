@@ -6,21 +6,24 @@ network protocols.
 The project attempts to follow the standard [RFC8466](https://datatracker.ietf.org/doc/html/rfc8446) as closely as
 possible in naming conventions and data structures when converting the standard into Rust implementation.
 
-The implementation is not likely the most efficient in terms of performance, or might not apply the best cryptographic
-practices.
+The implementation is not likely the most efficient in terms of performance, or might not apply all the best
+cryptographic
+practices (e.g. constant times).
 It leaves cryptographic operations mostly for external libraries, and we just generate some cryptographically random
 bits.
 
 In this project, we are more interested in the TLS protocol in byte level and how to implement decoders, create
 functional tests for them and integrate fuzzing straight from the beginning.
 
-Most of the data structures and their encoders have been provided. The logic to implement the handshake, error checking
+Most of the data structures and their encoders have been provided. The logic to implement the complete handshake, error
+checking
 and decoding is left mostly for the student.
 
 ## Quickstart for Rust
 
 We do not provide teaching for the language itself, but we can help on many issues.
-If you have programmed with any low-level language, you should be able to grasp the basics quickly.
+If you have programmed with any low-level language, you should be able to grasp the basics quickly, if the Rust is still
+unknown.
 
 If you fight with the compiler, it is just preventing potential bugs from the runtime instead.
 You have to adapt the idea that data is always owned.
@@ -54,7 +57,7 @@ It is also important to get your IDE environment properly set up. For a beginner
       After that, you can even highlight specific code and ask questions or suggestions from the Copilot. But then
       again, do not use things blindly.
 * Use student license for [JetBrain's RustRover.](https://www.jetbrains.com/rust/)
-    * You can apply the same as above also for RustRover
+    * You can apply the same as above also for RustRover.
 
 ## Type-Length-Value (TLV) pattern
 
@@ -64,7 +67,7 @@ is
 a common pattern, and TLS follows it in its many sub-protocols.
 
 For example, the lowest layer in TLS protocol uses
-so-called [Record protocol](https://datatracker.ietf.org/doc/html/rfc8446#section-5).
+so-called [Record Protocol](https://datatracker.ietf.org/doc/html/rfc8446#section-5).
 
 It wraps the higher level protocols, by following the idea of TLV.
 To see in practice, we can take a look for the TLS Record ASN.1 definition:
@@ -78,9 +81,13 @@ To see in practice, we can take a look for the TLS Record ASN.1 definition:
 Implementing functional tests in Rust can be
 done [to the same file as implementation](https://doc.rust-lang.org/book/ch11-01-writing-tests.html).
 
+This can be greatly beneficial; it is very easy to implement testing for your structs and their function implementations
+without never needing to run the functionality through the main function on development phase.
+
 To demonstrate testing, alert protocol is the simplest sub-protocol in TLS.
 Take a look for [alert.rs](src/alert.rs) which implements the data structures and encoders and decoders. In the end of
-the file, there is test module. If you have configured your IDE correctly, you should be able to click the play ▶ button
+the file, there is a test module. If you have configured your IDE correctly, you should be able to click the play ▶
+button
 to run the single test function, for example, `test_alert_from_bytes`, or all the tests from the module at once.
 
 You can also do the same from the command line:
@@ -90,3 +97,7 @@ cargo test alert::tests::test_alert_from_bytes
 ```
 
 Since the alert protocol uses only two bytes, it is straightforward to implement both positive tests and negative tests.
+
+If you wonder what the `impl std::fmt::Display for` means in the `Alert` data structures, it
+implements [a textual presentation for those objects](https://doc.rust-lang.org/rust-by-example/hello/print/print_display.html),
+for example, what is the output format when the `println!()` macro is used for the data type.
