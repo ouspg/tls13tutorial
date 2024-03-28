@@ -110,10 +110,28 @@ presentation.
 * `ProtocolVersion` has type `u16` and that takes 2 bytes to present this number. On lower level, we differ a bit from
   basic
   TLV as the version must be defined early.
-* Length of the `fragment` is presented with 2 bytes.
-* `fragment` is an array of bytes based on the length of previous
+* Length of the `fragment` is presented with 2 bytes. Here it has a separate field, but that is not always the case and
+  byte arrays with dynamic size should have always length determinant.
+* `fragment` is an array of bytes with size `length` based on the length of previous.
 
 TLS Record protocol has the plaintext version and ciphertext version. On the previous, we see the plaintext version.
+
+## Basics of implementing the decoders
+
+The base project reads all the data from TCP stream
+into [VecDeque](https://doc.rust-lang.org/std/collections/struct.VecDeque.html) buffer.
+It might not be most efficient way to parse bytes, but it allows taking chunks or single bytes without need to move or
+clone the
+remaining data in the memory.
+From learning point of view, it can be better than parsing traditional vector or byte slice, and without implementing
+anything on own.
+
+It provides methods such as `drain` or `pop_front` to consume parts from the buffer in correct order.
+This is useful, for example, if we want to implement decoder for specific type. We consume as much bytes as needed to
+construct the object, and the leftover data is still in the original buffer, waiting for constructing the follow-up
+object.
+
+You can try to parse raw byte slices, but be warned about bugs! `VecDeque` can also panic with incorrect index usage.
 
 ## Functional testing (positive and negative)
 

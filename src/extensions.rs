@@ -1,8 +1,12 @@
 use crate::handshake::ProtocolVersion;
+use std::collections::VecDeque;
+use std::io;
 
-pub trait AsBytes {
-    /// Returns `None` if the length of the data is out of standard constraints, otherwise returns `Some(Vec<u8>)`
+pub trait ByteSerializable {
+    // Returns the byte representation of the object if possible
     fn as_bytes(&self) -> Option<Vec<u8>>;
+    // Attempts to parse the bytes into a struct object implementing this trait
+    fn from_bytes(bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>>;
 }
 
 /// `Extension` is wrapper for any TLS extension
@@ -11,7 +15,7 @@ pub struct Extension {
     pub extension_type: ExtensionType, // Defined maximum value can be 65535, takes 2 bytes to present
     pub extension_data: Vec<u8>,       // length of the data can be 0..2^16-1 (2 bytes to present)
 }
-impl AsBytes for Extension {
+impl ByteSerializable for Extension {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice((self.extension_type as u16).to_be_bytes().as_ref());
@@ -24,6 +28,10 @@ impl AsBytes for Extension {
         );
         bytes.extend_from_slice(&self.extension_data);
         Some(bytes)
+    }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
     }
 }
 
@@ -58,7 +66,7 @@ pub enum ExtensionType {
 pub struct SupportedVersions {
     pub versions: Vec<ProtocolVersion>, // length of the data can be 2..254 on client, 1 byte to present
 }
-impl AsBytes for SupportedVersions {
+impl ByteSerializable for SupportedVersions {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         for version in &self.versions {
@@ -74,6 +82,10 @@ impl AsBytes for SupportedVersions {
                 .copied(),
         );
         Some(bytes)
+    }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
     }
 }
 
@@ -101,7 +113,7 @@ type HostName = Vec<u8>;
 pub struct ServerNameList {
     pub server_name_list: Vec<ServerName>,
 }
-impl AsBytes for ServerNameList {
+impl ByteSerializable for ServerNameList {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         for server_name in &self.server_name_list {
@@ -125,6 +137,10 @@ impl AsBytes for ServerNameList {
                 .copied(),
         );
         Some(bytes)
+    }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
     }
 }
 
@@ -159,7 +175,7 @@ pub enum SignatureScheme {
     /* Reserved Code Points */
     // PrivateUse(0xFE00..0xFFFF),
 }
-impl AsBytes for SignatureScheme {
+impl ByteSerializable for SignatureScheme {
     //noinspection DuplicatedCode
     fn as_bytes(&self) -> Option<Vec<u8>> {
         match *self as u32 {
@@ -168,12 +184,16 @@ impl AsBytes for SignatureScheme {
             _ => None,
         }
     }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
+    }
 }
 #[derive(Debug, Clone)]
 pub struct SupportedSignatureAlgorithms {
     pub supported_signature_algorithms: Vec<SignatureScheme>, // length of the data can be 2..2^16-2
 }
-impl AsBytes for SupportedSignatureAlgorithms {
+impl ByteSerializable for SupportedSignatureAlgorithms {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         for signature_scheme in &self.supported_signature_algorithms {
@@ -189,6 +209,10 @@ impl AsBytes for SupportedSignatureAlgorithms {
                 .copied(),
         );
         Some(bytes)
+    }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
     }
 }
 
@@ -215,7 +239,7 @@ pub enum NamedGroup {
     // ffdhe_private_use(0x01FC..0x01FF),
     // ecdhe_private_use(0xFE00..0xFEFF),
 }
-impl AsBytes for NamedGroup {
+impl ByteSerializable for NamedGroup {
     //noinspection DuplicatedCode
     fn as_bytes(&self) -> Option<Vec<u8>> {
         match *self as u32 {
@@ -224,13 +248,17 @@ impl AsBytes for NamedGroup {
             _ => None,
         }
     }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct NamedGroupList {
     pub named_group_list: Vec<NamedGroup>, // (2 bytes to present)
 }
-impl AsBytes for NamedGroupList {
+impl ByteSerializable for NamedGroupList {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         for named_group in &self.named_group_list {
@@ -247,6 +275,10 @@ impl AsBytes for NamedGroupList {
         );
         Some(bytes)
     }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
+    }
 }
 
 /// ## `KeyShare` Extension
@@ -255,7 +287,7 @@ pub struct KeyShareEntry {
     pub group: NamedGroup,
     pub key_exchange: Vec<u8>, // (2 bytes to present the length)
 }
-impl AsBytes for KeyShareEntry {
+impl ByteSerializable for KeyShareEntry {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.extend(self.group.as_bytes()?);
@@ -269,6 +301,10 @@ impl AsBytes for KeyShareEntry {
         bytes.extend_from_slice(&self.key_exchange);
         Some(bytes)
     }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
+    }
 }
 
 /// There are three different structures for `KeyShare` extension
@@ -279,7 +315,7 @@ pub struct KeyShareClientHello {
     pub client_shares: Vec<KeyShareEntry>, // (2 bytes to present the length)
 }
 
-impl AsBytes for KeyShareClientHello {
+impl ByteSerializable for KeyShareClientHello {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         for client_share in &self.client_shares {
@@ -296,6 +332,10 @@ impl AsBytes for KeyShareClientHello {
         );
         Some(bytes)
     }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
+    }
 }
 /// `key_share` extension data structure in `ServerHello`
 /// Contains only single `KeyShareEntry` when compared to `KeyShareClientHello`
@@ -303,9 +343,13 @@ impl AsBytes for KeyShareClientHello {
 pub struct KeyShareServerHello {
     pub server_share: KeyShareEntry,
 }
-impl AsBytes for KeyShareServerHello {
+impl ByteSerializable for KeyShareServerHello {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         self.server_share.as_bytes()
+    }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
     }
 }
 
@@ -325,7 +369,7 @@ pub struct PskKeyExchangeModes {
     pub ke_modes: Vec<PskKeyExchangeMode>, // (1 byte to present the length)
 }
 
-impl AsBytes for PskKeyExchangeModes {
+impl ByteSerializable for PskKeyExchangeModes {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         for ke_mode in &self.ke_modes {
@@ -341,6 +385,10 @@ impl AsBytes for PskKeyExchangeModes {
                 .copied(),
         );
         Some(bytes)
+    }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+        todo!()
     }
 }
 

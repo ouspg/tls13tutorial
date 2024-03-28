@@ -1,5 +1,6 @@
 #![allow(clippy::module_name_repetitions)]
-use crate::extensions::{AsBytes, Extension};
+use crate::extensions::{ByteSerializable, Extension};
+use std::collections::VecDeque;
 
 pub type ProtocolVersion = u16;
 type Random = [u8; 32];
@@ -56,7 +57,7 @@ pub struct Handshake {
     pub message: HandshakeMessage,
 }
 
-impl AsBytes for Handshake {
+impl ByteSerializable for Handshake {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.push(self.msg_type as u8);
@@ -73,6 +74,10 @@ impl AsBytes for Handshake {
             _ => {}
         }
         Some(bytes)
+    }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> std::io::Result<Box<Self>> {
+        todo!()
     }
 }
 
@@ -138,7 +143,7 @@ impl ClientHello {
     }
 }
 
-impl AsBytes for ClientHello {
+impl ByteSerializable for ClientHello {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.extend(&self.version_bytes());
@@ -148,6 +153,10 @@ impl AsBytes for ClientHello {
         bytes.extend(&self.compression_methods_bytes());
         bytes.extend(&self.extensions_bytes()?);
         Some(bytes)
+    }
+
+    fn from_bytes(_bytes: &mut VecDeque<u8>) -> std::io::Result<Box<Self>> {
+        todo!()
     }
 }
 

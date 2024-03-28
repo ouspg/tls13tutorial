@@ -1,3 +1,4 @@
+use crate::extensions::ByteSerializable;
 use crate::handshake::ProtocolVersion;
 use log::debug;
 use std::collections::VecDeque;
@@ -8,13 +9,6 @@ const RECORD_FRAGMENT_MAX_SIZE: u16 = 2u16.pow(14);
 /// [TLS Record Layer](https://datatracker.ietf.org/doc/html/rfc8446#section-5.1)
 /// TLS Record Content Types
 ///
-pub trait ByteSerializable {
-    fn as_bytes(&self) -> Vec<u8>;
-    // Attempts to parse the bytes into a `TLSRecord` struct, returning remaining bytes
-    fn from_bytes(bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>>;
-
-    // fn parse_payload(_bytes: &[u8]) -> io::Result<Box<Self>>;
-}
 
 #[derive(Debug, Copy, Clone)]
 pub enum ContentType {
@@ -35,13 +29,13 @@ pub struct TLSPlaintext {
 }
 
 impl ByteSerializable for TLSPlaintext {
-    fn as_bytes(&self) -> Vec<u8> {
+    fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.push(self.record_type as u8);
         bytes.extend_from_slice(&self.legacy_record_version.to_be_bytes());
         bytes.extend_from_slice(&self.length.to_be_bytes());
         bytes.extend_from_slice(&self.fragment);
-        bytes
+        Some(bytes)
     }
     /// Parse the bytes into a `TLSPlaintext` struct
     /// Returns `Result` object with the parsed `TLSPlaintext` object and the remaining bytes
@@ -68,7 +62,6 @@ impl ByteSerializable for TLSPlaintext {
             23 => ContentType::ApplicationData,
             _ => ContentType::Invalid,
         };
-        // FIXME Using plain indexes in general for parsing is not recommended!
         let legacy_record_version = u16::from_be_bytes(
             bytes
                 .drain(..2)

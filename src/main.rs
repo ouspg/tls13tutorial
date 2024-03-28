@@ -12,9 +12,9 @@ mod tls_record;
 
 use alert::Alert;
 use extensions::{
-    AsBytes, Extension, ExtensionType, KeyShareClientHello, KeyShareEntry, NameType, NamedGroup,
-    NamedGroupList, ServerName, ServerNameList, SignatureScheme, SupportedSignatureAlgorithms,
-    SupportedVersions,
+    ByteSerializable, Extension, ExtensionType, KeyShareClientHello, KeyShareEntry, NameType,
+    NamedGroup, NamedGroupList, ServerName, ServerNameList, SignatureScheme,
+    SupportedSignatureAlgorithms, SupportedVersions,
 };
 use handshake::{
     cipher_suites, ClientHello, Handshake, HandshakeMessage, HandshakeType, TLS_VERSION_1_3,
@@ -26,7 +26,7 @@ use std::collections::VecDeque;
 use std::fmt::Write;
 use std::io::{self, Read as SocketRead, Write as SocketWrite};
 use std::net::TcpStream;
-use tls_record::{ByteSerializable, ContentType, TLSPlaintext};
+use tls_record::{ContentType, TLSPlaintext};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 /// Generate a new Elliptic Curve Diffie-Hellman public-private key pair
@@ -184,7 +184,11 @@ fn main() {
                 fragment: handshake_bytes,
             };
             // Send the constructed request to the server
-            match stream.write_all(&request_record.as_bytes()) {
+            match stream.write_all(
+                &request_record
+                    .as_bytes()
+                    .expect("Failed to serialize TLSPlaintext"),
+            ) {
                 Ok(()) => {
                     info!("The handshake request has been sent...");
                 }

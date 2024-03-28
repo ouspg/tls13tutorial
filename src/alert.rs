@@ -1,5 +1,5 @@
 #![allow(clippy::module_name_repetitions)]
-use crate::tls_record::ByteSerializable;
+use crate::extensions::ByteSerializable;
 use std::collections::VecDeque;
 use std::io;
 /// `AlertLevel` is a 1-byte value enum representing the level of the alert.
@@ -96,8 +96,12 @@ pub struct Alert {
 }
 
 impl ByteSerializable for Alert {
-    fn as_bytes(&self) -> Vec<u8> {
-        vec![self.level as u8, self.description as u8]
+    fn as_bytes(&self) -> Option<Vec<u8>> {
+        Some(vec![
+            // Check that the values are within the u8 range
+            u8::try_from(self.level as u16).ok()?,
+            u8::try_from(self.description as u16).ok()?,
+        ])
     }
     /// Parse the bytes into an `Alert` struct, data must be 2 bytes long
     fn from_bytes(bytes: &mut VecDeque<u8>) -> io::Result<Box<Alert>> {

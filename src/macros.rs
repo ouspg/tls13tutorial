@@ -7,7 +7,7 @@ macro_rules! round_trip {
     ($typ:ty, $value:expr, $expected:expr) => {{
         let value: $typ = $value;
         let expected: &[u8] = $expected;
-        let actual_encoding = $value.as_bytes();
+        let actual_encoding = $value.as_bytes().unwrap();
         pretty_assertions::assert_eq!(expected, &*actual_encoding);
         // Drop the remainder bytes in this case
         let mut actual_encoding = VecDeque::from(actual_encoding);
