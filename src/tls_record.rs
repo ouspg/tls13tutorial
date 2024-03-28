@@ -1,5 +1,6 @@
 use crate::handshake::ProtocolVersion;
 use log::debug;
+use std::collections::VecDeque;
 use std::io;
 
 const RECORD_FRAGMENT_MAX_SIZE: u16 = 2u16.pow(14);
@@ -7,10 +8,10 @@ const RECORD_FRAGMENT_MAX_SIZE: u16 = 2u16.pow(14);
 /// [TLS Record Layer](https://datatracker.ietf.org/doc/html/rfc8446#section-5.1)
 /// TLS Record Content Types
 ///
-pub trait TLSRecord {
+pub trait ByteSerializable {
     fn as_bytes(&self) -> Vec<u8>;
     // Attempts to parse the bytes into a `TLSRecord` struct, returning remaining bytes
-    fn from_bytes(bytes: &[u8]) -> io::Result<(Box<Self>, Vec<u8>)>;
+    fn from_bytes(bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>>;
 
     // fn parse_payload(_bytes: &[u8]) -> io::Result<Box<Self>>;
 }
@@ -33,7 +34,7 @@ pub struct TLSPlaintext {
     pub fragment: Vec<u8>, // fragment of size 'length'
 }
 
-impl TLSRecord for TLSPlaintext {
+impl ByteSerializable for TLSPlaintext {
     fn as_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.push(self.record_type as u8);
@@ -48,14 +49,19 @@ impl TLSRecord for TLSPlaintext {
     /// In stack, only the pointer to the heap memory is stored to make compiler known the size
     /// of the return type in compile-time.
     /// NOTE The implementation might not be secure...
-    fn from_bytes(bytes: &[u8]) -> io::Result<(Box<TLSPlaintext>, Vec<u8>)> {
+    fn from_bytes(bytes: &mut VecDeque<u8>) -> io::Result<Box<TLSPlaintext>> {
         if bytes.len() < 6 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("TLSPlaintext length too short: {}", bytes.len()),
             ));
         }
-        let record_type = match bytes[0] {
+        let record_type = match bytes.pop_front().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Insufficient bytes for TLSPlaintext record type",
+            )
+        })? {
             20 => ContentType::ChangeCipherSpec,
             21 => ContentType::Alert,
             22 => ContentType::Handshake,
@@ -63,15 +69,23 @@ impl TLSRecord for TLSPlaintext {
             _ => ContentType::Invalid,
         };
         // FIXME Using plain indexes in general for parsing is not recommended!
-        let legacy_record_version = u16::from_be_bytes(bytes[1..3].try_into().map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "Invalid TLSPlaintext version")
-        })?);
+        let legacy_record_version = u16::from_be_bytes(
+            bytes
+                .drain(..2)
+                .collect::<Vec<u8>>()
+                .try_into()
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "Invalid TLSPlaintext version")
+                })?,
+        );
 
         // Max size for single block is 2^14 https://datatracker.ietf.org/doc/html/rfc8446#section-5.1
         // The length MUST NOT exceed 2^14 bytes.
         //  An endpoint that receives a record that exceeds this length MUST
         //  terminate the connection with a "record_overflow" alert.
-        let length = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let length = u16::from_be_bytes(bytes.drain(..2).collect::<Vec<u8>>().try_into().map_err(
+            |_| io::Error::new(io::ErrorKind::InvalidData, "Invalid TLSPlaintext length"),
+        )?);
         debug!("TLSPlaintext defined length: {}", length);
         if length > RECORD_FRAGMENT_MAX_SIZE {
             return Err(io::Error::new(
@@ -79,34 +93,27 @@ impl TLSRecord for TLSPlaintext {
                 "Invalid TLSPlaintext: record overflow",
             ));
         }
-        let fragment = bytes[5..].to_vec();
-        if fragment.len() > length as usize {
-            let (fragment, remainder) = fragment.split_at(length as usize);
-            Ok((
-                Box::from(TLSPlaintext {
-                    record_type,
-                    legacy_record_version,
-                    length,
-                    fragment: fragment.to_vec(),
-                }),
-                remainder.to_vec(),
-            ))
+        if bytes.len() > length as usize {
+            let fragment = bytes.drain(..length as usize).collect();
+            Ok(Box::from(TLSPlaintext {
+                record_type,
+                legacy_record_version,
+                length,
+                fragment,
+            }))
         } else {
-            if fragment.len() != length as usize {
+            if bytes.len() != length as usize {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "TLSPlaintext: length and fragment size mismatch",
                 ));
             }
-            Ok((
-                Box::from(TLSPlaintext {
-                    record_type,
-                    legacy_record_version,
-                    length,
-                    fragment,
-                }),
-                vec![],
-            ))
+            Ok(Box::from(TLSPlaintext {
+                record_type,
+                legacy_record_version,
+                length,
+                fragment: bytes.drain(..).collect(),
+            }))
         }
     }
 }

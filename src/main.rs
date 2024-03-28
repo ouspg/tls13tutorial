@@ -7,6 +7,7 @@
 mod alert;
 mod extensions;
 mod handshake;
+mod macros;
 mod tls_record;
 
 use alert::Alert;
@@ -21,10 +22,11 @@ use handshake::{
 };
 use log::{debug, error, info, warn};
 use rand::rngs::OsRng;
+use std::collections::VecDeque;
 use std::fmt::Write;
 use std::io::{self, Read as SocketRead, Write as SocketWrite};
 use std::net::TcpStream;
-use tls_record::{ContentType, TLSPlaintext, TLSRecord};
+use tls_record::{ByteSerializable, ContentType, TLSPlaintext};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 /// Generate a new Elliptic Curve Diffie-Hellman public-private key pair
@@ -45,10 +47,10 @@ fn generate_dh_key_pair() -> (EphemeralSecret, PublicKey) {
     (secret, public)
 }
 /// Process the data from TCP stream in the chunks of 4096 bytes and
-/// read the response data into a buffer.
-fn process_tcp_stream(mut stream: &mut TcpStream) -> io::Result<Vec<u8>> {
+/// read the response data into a buffer in a form of Queue for easier parsing.
+fn process_tcp_stream(mut stream: &mut TcpStream) -> io::Result<VecDeque<u8>> {
     let mut reader = io::BufReader::new(&mut stream);
-    let mut buffer = Vec::new();
+    let mut buffer: VecDeque<u8> = VecDeque::new();
 
     loop {
         let mut chunk = [0; 4096];
@@ -56,7 +58,7 @@ fn process_tcp_stream(mut stream: &mut TcpStream) -> io::Result<Vec<u8>> {
             Ok(0) => break, // Connection closed by the sender
             Ok(n) => {
                 debug!("Received {n} bytes of data.");
-                buffer.extend_from_slice(&chunk[..n]);
+                buffer.extend(&chunk[..n]);
             }
             Err(e) => {
                 error!("Error when reading from the TCP stream: {}", e);
@@ -191,7 +193,7 @@ fn main() {
                 }
             }
             // Read all the response data into a buffer
-            let buffer = process_tcp_stream(&mut stream).unwrap_or_else(|e| {
+            let mut buffer = process_tcp_stream(&mut stream).unwrap_or_else(|e| {
                 error!("Failed to read the response: {e}");
                 std::process::exit(1)
             });
@@ -199,25 +201,27 @@ fn main() {
             // Read the initial response data into a buffer
             // In this case, it should be `ServerHello` message if the `ClientHello`
             // was correct and offered supported cipher suites
-            match TLSPlaintext::from_bytes(&buffer) {
-                Ok((response, remainder_bytes)) => {
+            match TLSPlaintext::from_bytes(&mut buffer) {
+                Ok(response) => {
                     info!("Response received: {response:?}");
                     match response.record_type {
-                        ContentType::Alert => match Alert::from_bytes(&response.fragment) {
-                            Ok(alert) => {
-                                warn!("Alert received: {alert}");
+                        ContentType::Alert => {
+                            match Alert::from_bytes(&mut response.fragment.into()) {
+                                Ok(alert) => {
+                                    warn!("Alert received: {alert}");
+                                }
+                                Err(e) => {
+                                    error!("Failed to parse the alert: {e}");
+                                }
                             }
-                            Err(e) => {
-                                error!("Failed to parse the alert: {e}");
-                            }
-                        },
+                        }
                         ContentType::Handshake => {
                             info!("Handshake message received: {:?}", response.fragment);
                             todo!("Handle the ServerHello handshake response")
                         }
                         _ => {
                             error!("Unexpected response type: {:?}", response.record_type);
-                            debug!("Remaining bytes: {:?}", remainder_bytes);
+                            debug!("Remaining bytes: {:?}", buffer);
                         }
                     }
                 }

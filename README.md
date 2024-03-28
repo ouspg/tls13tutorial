@@ -70,11 +70,50 @@ For example, the lowest layer in TLS protocol uses
 so-called [Record Protocol](https://datatracker.ietf.org/doc/html/rfc8446#section-5).
 
 It wraps the higher level protocols, by following the idea of TLV.
-To see in practice, we can take a look for the TLS Record ASN.1 definition:
+To see in practice, we can take a look for the TLS
+Record [ASN.1 definitions](https://datatracker.ietf.org/doc/html/rfc8446#appendix-B.1) and `TLSPlaintext` as example for
+Rust data structure:
 
-```asn
+```rust
+pub type ProtocolVersion = u16;
 
+#[derive(Debug, Copy, Clone)]
+pub enum ContentType {
+    Invalid = 0,
+    ChangeCipherSpec = 20,
+    Alert = 21,
+    Handshake = 22,
+    ApplicationData = 23,
+}
+
+#[derive(Debug, Clone)]
+pub struct TLSPlaintext {
+    pub record_type: ContentType,
+    pub legacy_record_version: ProtocolVersion,
+    // 2 bytes to represent
+    // always 0x0303 for TLS 1.3, except for the first ClientHello where it can be 0x0301
+    pub length: u16,
+    // length defined as 2 bytes
+    pub fragment: Vec<u8>, // fragment of size 'length'
+}
 ```
+
+In the context of binary encoding, everything must have a size.
+The data should be possible to deserialize to the original structure based on the byte stream only.
+If we want to serialize the structure of `TLSPlaintext` into bytes, we go in order every field and create the byte
+presentation.
+
+* Record field takes 1 byte to present as the max value for `ContentType` is defined to be 255 (`u8`). In this case, the
+  type defines the data content of
+  the `fragment` field. When you decode the byte stream, you know that the first byte is about `ContentType` and takes
+  one byte.
+* `ProtocolVersion` has type `u16` and that takes 2 bytes to present this number. On lower level, we differ a bit from
+  basic
+  TLV as the version must be defined early.
+* Length of the `fragment` is presented with 2 bytes.
+* `fragment` is an array of bytes based on the length of previous
+
+TLS Record protocol has the plaintext version and ciphertext version. On the previous, we see the plaintext version.
 
 ## Functional testing (positive and negative)
 
@@ -101,3 +140,17 @@ Since the alert protocol uses only two bytes, it is straightforward to implement
 If you wonder what the `impl std::fmt::Display for` means in the `Alert` data structures, it
 implements [a textual presentation for those objects](https://doc.rust-lang.org/rust-by-example/hello/print/print_display.html),
 for example, what is the output format when the `println!()` macro is used for the data type.
+
+## Fuzzing the project
+
+If you are using Linux machine for development, starting fuzz testing with precise control is very straightforward.
+There are many fuzzing libraries, which can be integrated to project to get coverage-guided fuzzing.
+
+Fuzzing provides the stream of bytes for the interface you choose, and depending on the used backend, it will provide
+testing data and coverage-guided mutation to test robustness of the selected functionality.
+
+* [libfuzzer](https://github.com/rust-fuzz/libfuzzer)
+* [libAFL](https://github.com/AFLplusplus/LibAFL)
+
+In [fuzzing directory](fuzzing), `libfuzzer` is pre-configured.
+You need to use Linux environment for that.

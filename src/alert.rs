@@ -1,7 +1,10 @@
+#![allow(clippy::module_name_repetitions)]
+use crate::tls_record::ByteSerializable;
+use std::collections::VecDeque;
 use std::io;
 /// `AlertLevel` is a 1-byte value enum representing the level of the alert.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum AlertLevel {
+pub enum AlertLevel {
     Warning = 1,
     Fatal = 2,
 }
@@ -17,7 +20,7 @@ impl std::fmt::Display for AlertLevel {
 
 /// `AlertDescription` is a 1-byte value enum representing the description of the alert.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum AlertDescription {
+pub enum AlertDescription {
     CloseNotify = 0,
     UnexpectedMessage = 10,
     BadRecordMac = 20,
@@ -88,22 +91,25 @@ impl std::fmt::Display for AlertDescription {
 #[derive(Debug, Clone, PartialEq, Eq)]
 
 pub struct Alert {
-    level: AlertLevel, // in TLS 1.3 the level is implicit and ignored
-    description: AlertDescription,
+    pub level: AlertLevel, // in TLS 1.3 the level is implicit and ignored
+    pub description: AlertDescription,
 }
 
-impl Alert {
+impl ByteSerializable for Alert {
+    fn as_bytes(&self) -> Vec<u8> {
+        vec![self.level as u8, self.description as u8]
+    }
     /// Parse the bytes into an `Alert` struct, data must be 2 bytes long
-    pub fn from_bytes(bytes: &[u8]) -> io::Result<Alert> {
+    fn from_bytes(bytes: &mut VecDeque<u8>) -> io::Result<Box<Alert>> {
         if bytes.len() != 2 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Invalid alert length",
             ));
         }
-        let level = match bytes[0] {
-            1 => AlertLevel::Warning,
-            2 => AlertLevel::Fatal,
+        let level = match bytes.pop_front() {
+            Some(1) => AlertLevel::Warning,
+            Some(2) => AlertLevel::Fatal,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -111,34 +117,34 @@ impl Alert {
                 ))
             }
         };
-        let description = match bytes[1] {
-            0 => AlertDescription::CloseNotify,
-            10 => AlertDescription::UnexpectedMessage,
-            20 => AlertDescription::BadRecordMac,
-            22 => AlertDescription::RecordOverflow,
-            40 => AlertDescription::HandshakeFailure,
-            42 => AlertDescription::BadCertificate,
-            43 => AlertDescription::UnsupportedCertificate,
-            44 => AlertDescription::CertificateRevoked,
-            45 => AlertDescription::CertificateExpired,
-            46 => AlertDescription::CertificateUnknown,
-            47 => AlertDescription::IllegalParameter,
-            48 => AlertDescription::UnknownCa,
-            49 => AlertDescription::AccessDenied,
-            50 => AlertDescription::DecodeError,
-            51 => AlertDescription::DecryptError,
-            70 => AlertDescription::ProtocolVersion,
-            71 => AlertDescription::InsufficientSecurity,
-            80 => AlertDescription::InternalError,
-            86 => AlertDescription::InappropriateFallback,
-            90 => AlertDescription::UserCanceled,
-            109 => AlertDescription::MissingExtension,
-            110 => AlertDescription::UnsupportedExtension,
-            112 => AlertDescription::UnrecognizedName,
-            113 => AlertDescription::BadCertificateStatusResponse,
-            115 => AlertDescription::UnknownPskIdentity,
-            116 => AlertDescription::CertificateRequired,
-            120 => AlertDescription::NoApplicationProtocol,
+        let description = match bytes.pop_front() {
+            Some(0) => AlertDescription::CloseNotify,
+            Some(10) => AlertDescription::UnexpectedMessage,
+            Some(20) => AlertDescription::BadRecordMac,
+            Some(22) => AlertDescription::RecordOverflow,
+            Some(40) => AlertDescription::HandshakeFailure,
+            Some(42) => AlertDescription::BadCertificate,
+            Some(43) => AlertDescription::UnsupportedCertificate,
+            Some(44) => AlertDescription::CertificateRevoked,
+            Some(45) => AlertDescription::CertificateExpired,
+            Some(46) => AlertDescription::CertificateUnknown,
+            Some(47) => AlertDescription::IllegalParameter,
+            Some(48) => AlertDescription::UnknownCa,
+            Some(49) => AlertDescription::AccessDenied,
+            Some(50) => AlertDescription::DecodeError,
+            Some(51) => AlertDescription::DecryptError,
+            Some(70) => AlertDescription::ProtocolVersion,
+            Some(71) => AlertDescription::InsufficientSecurity,
+            Some(80) => AlertDescription::InternalError,
+            Some(86) => AlertDescription::InappropriateFallback,
+            Some(90) => AlertDescription::UserCanceled,
+            Some(109) => AlertDescription::MissingExtension,
+            Some(110) => AlertDescription::UnsupportedExtension,
+            Some(112) => AlertDescription::UnrecognizedName,
+            Some(113) => AlertDescription::BadCertificateStatusResponse,
+            Some(115) => AlertDescription::UnknownPskIdentity,
+            Some(116) => AlertDescription::CertificateRequired,
+            Some(120) => AlertDescription::NoApplicationProtocol,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -146,7 +152,7 @@ impl Alert {
                 ))
             }
         };
-        Ok(Alert { level, description })
+        Ok(Box::new(Alert { level, description }))
     }
 }
 /// Allow the textual presentation of the `Alert` struct
@@ -165,38 +171,53 @@ impl std::fmt::Display for Alert {
 mod tests {
     // Use the Alert types from the parent module
     use super::*;
+    use crate::round_trip;
 
     #[test]
     // Test the conversion from bytes to Alert. Not comprehensive.
     fn test_alert_from_bytes() {
-        let bytes = [2, 50];
-        let alert = Alert::from_bytes(&bytes).unwrap();
+        let mut bytes = VecDeque::from([2, 50]);
+        let alert = Alert::from_bytes(&mut bytes).unwrap();
         assert_eq!(alert.level, AlertLevel::Fatal);
         assert_eq!(alert.description, AlertDescription::DecodeError);
         let bytes = [1, 0];
-        let alert = Alert::from_bytes(&bytes).unwrap();
+        let mut bytes = VecDeque::from(bytes);
+        let alert = Alert::from_bytes(&mut bytes).unwrap();
         assert_eq!(alert.level, AlertLevel::Warning);
         assert_eq!(alert.description, AlertDescription::CloseNotify);
+
+        // With round_trip macro we can test encoding matches the expected value
+        // And decoding results into the initial object
+        // All of the above could be replaced with this approach
+        round_trip!(
+            Alert,
+            Alert {
+                level: AlertLevel::Fatal,
+                description: AlertDescription::DecodeError
+            },
+            &[2, 50]
+        );
 
         // ## Some negative testing ##
 
         // Invalid alert level
-        let bytes = [3, 0];
-        assert!(Alert::from_bytes(&bytes).is_err());
+        let bytes = VecDeque::from([3, 0]);
+        // We clone since the function consumes the bytes, and we make multiple calls
+        assert!(Alert::from_bytes(&mut bytes.clone()).is_err());
         // More precise tests for specific error just to demonstrate the error handling
         assert!(matches!(
-            Alert::from_bytes(&bytes),
+            Alert::from_bytes(&mut bytes.clone()),
             Err(ref e) if e.kind() == io::ErrorKind::InvalidData
         ));
         assert!(matches!(
-            Alert::from_bytes(&bytes),
+            Alert::from_bytes(&mut bytes.clone()),
             Err(ref e) if e.to_string() == "Invalid alert level"
         ));
         // Invalid alert description
-        let bytes = [1, 1];
-        assert!(Alert::from_bytes(&bytes).is_err());
+        let mut bytes = VecDeque::from([1, 1]);
+        assert!(Alert::from_bytes(&mut bytes).is_err());
         // Too long alert data
-        let bytes = [2, 50, 1];
-        assert!(Alert::from_bytes(&bytes).is_err());
+        let mut bytes = VecDeque::from([2, 50, 1]);
+        assert!(Alert::from_bytes(&mut bytes).is_err());
     }
 }
