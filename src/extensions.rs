@@ -1,12 +1,12 @@
 use crate::handshake::ProtocolVersion;
-use std::collections::VecDeque;
+use crate::parser::ByteParser;
 use std::io;
 
 pub trait ByteSerializable {
     // Returns the byte representation of the object if possible
     fn as_bytes(&self) -> Option<Vec<u8>>;
     // Attempts to parse the bytes into a struct object implementing this trait
-    fn from_bytes(bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>>;
+    fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>>;
 }
 
 /// `Extension` is wrapper for any TLS extension
@@ -30,8 +30,21 @@ impl ByteSerializable for Extension {
         Some(bytes)
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
-        todo!()
+    fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
+        let ext_type = bytes
+            .get_u16()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid extension type"))?;
+
+        let ext_data_len = bytes.get_u16().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Invalid extension data length")
+        })?;
+        let ext_data = bytes
+            .get_bytes(ext_data_len as usize)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid extension data"))?;
+        Ok(Box::new(Extension {
+            extension_type: ext_type.into(),
+            extension_data: ext_data,
+        }))
     }
 }
 
@@ -61,6 +74,36 @@ pub enum ExtensionType {
     SignatureAlgorithmsCert = 50,
     KeyShare = 51,
 }
+/// By using `From` trait, we can convert `u16` to `ExtensionType`, e.g. by using .into()
+impl From<u16> for ExtensionType {
+    fn from(value: u16) -> Self {
+        match value {
+            0 => ExtensionType::ServerName,
+            1 => ExtensionType::MaxFragmentLength,
+            5 => ExtensionType::StatusRequest,
+            10 => ExtensionType::SupportedGroups,
+            13 => ExtensionType::SignatureAlgorithms,
+            14 => ExtensionType::UseSrtp,
+            15 => ExtensionType::Heartbeat,
+            16 => ExtensionType::ApplicationLayerProtocolNegotiation,
+            18 => ExtensionType::SignedCertificateTimestamp,
+            19 => ExtensionType::ClientCertificateType,
+            20 => ExtensionType::ServerCertificateType,
+            21 => ExtensionType::Padding,
+            41 => ExtensionType::PreSharedKey,
+            42 => ExtensionType::EarlyData,
+            43 => ExtensionType::SupportedVersions,
+            44 => ExtensionType::Cookie,
+            45 => ExtensionType::PskKeyExchangeModes,
+            47 => ExtensionType::CertificateAuthorities,
+            48 => ExtensionType::OidFilters,
+            49 => ExtensionType::PostHandshakeAuth,
+            50 => ExtensionType::SignatureAlgorithmsCert,
+            51 => ExtensionType::KeyShare,
+            _ => ExtensionType::ServerName,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SupportedVersions {
@@ -84,7 +127,7 @@ impl ByteSerializable for SupportedVersions {
         Some(bytes)
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }
@@ -139,7 +182,7 @@ impl ByteSerializable for ServerNameList {
         Some(bytes)
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }
@@ -185,7 +228,7 @@ impl ByteSerializable for SignatureScheme {
         }
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }
@@ -211,7 +254,7 @@ impl ByteSerializable for SupportedSignatureAlgorithms {
         Some(bytes)
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }
@@ -249,7 +292,7 @@ impl ByteSerializable for NamedGroup {
         }
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }
@@ -276,7 +319,7 @@ impl ByteSerializable for NamedGroupList {
         Some(bytes)
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }
@@ -302,7 +345,7 @@ impl ByteSerializable for KeyShareEntry {
         Some(bytes)
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }
@@ -333,7 +376,7 @@ impl ByteSerializable for KeyShareClientHello {
         Some(bytes)
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }
@@ -348,7 +391,7 @@ impl ByteSerializable for KeyShareServerHello {
         self.server_share.as_bytes()
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }
@@ -361,9 +404,9 @@ pub enum PskKeyExchangeMode {
     PskKe = 0,
     PskDheKe = 1,
 }
-/// ## "psk_key_exchange_modes" extension
+/// ## `psk_key_exchange_modes` extension
 /// A client MUST provide a `PskKeyExchangeModes` extension if it
-///  offers a "pre_shared_key" extension.
+///  offers a `pre_shared_key` extension.
 #[derive(Debug, Clone)]
 pub struct PskKeyExchangeModes {
     pub ke_modes: Vec<PskKeyExchangeMode>, // (1 byte to present the length)
@@ -387,7 +430,7 @@ impl ByteSerializable for PskKeyExchangeModes {
         Some(bytes)
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }

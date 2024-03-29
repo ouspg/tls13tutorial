@@ -1,6 +1,6 @@
 #![allow(clippy::module_name_repetitions)]
 use crate::extensions::ByteSerializable;
-use std::collections::VecDeque;
+use crate::parser::ByteParser;
 use std::io;
 /// `AlertLevel` is a 1-byte value enum representing the level of the alert.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -104,14 +104,14 @@ impl ByteSerializable for Alert {
         ])
     }
     /// Parse the bytes into an `Alert` struct, data must be 2 bytes long
-    fn from_bytes(bytes: &mut VecDeque<u8>) -> io::Result<Box<Alert>> {
+    fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         if bytes.len() != 2 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Invalid alert length",
             ));
         }
-        let level = match bytes.pop_front() {
+        let level = match bytes.get_u8() {
             Some(1) => AlertLevel::Warning,
             Some(2) => AlertLevel::Fatal,
             _ => {
@@ -121,7 +121,7 @@ impl ByteSerializable for Alert {
                 ))
             }
         };
-        let description = match bytes.pop_front() {
+        let description = match bytes.get_u8() {
             Some(0) => AlertDescription::CloseNotify,
             Some(10) => AlertDescription::UnexpectedMessage,
             Some(20) => AlertDescription::BadRecordMac,
@@ -180,12 +180,11 @@ mod tests {
     #[test]
     // Test the conversion from bytes to Alert. Not comprehensive.
     fn test_alert_from_bytes() {
-        let mut bytes = VecDeque::from([2, 50]);
+        let mut bytes = ByteParser::from(vec![2u8, 50]);
         let alert = Alert::from_bytes(&mut bytes).unwrap();
         assert_eq!(alert.level, AlertLevel::Fatal);
         assert_eq!(alert.description, AlertDescription::DecodeError);
-        let bytes = [1, 0];
-        let mut bytes = VecDeque::from(bytes);
+        let mut bytes = ByteParser::from(vec![1u8, 0]);
         let alert = Alert::from_bytes(&mut bytes).unwrap();
         assert_eq!(alert.level, AlertLevel::Warning);
         assert_eq!(alert.description, AlertDescription::CloseNotify);
@@ -205,7 +204,7 @@ mod tests {
         // ## Some negative testing ##
 
         // Invalid alert level
-        let bytes = VecDeque::from([3, 0]);
+        let bytes = ByteParser::from(vec![3, 0]);
         // We clone since the function consumes the bytes, and we make multiple calls
         assert!(Alert::from_bytes(&mut bytes.clone()).is_err());
         // More precise tests for specific error just to demonstrate the error handling
@@ -218,10 +217,10 @@ mod tests {
             Err(ref e) if e.to_string() == "Invalid alert level"
         ));
         // Invalid alert description
-        let mut bytes = VecDeque::from([1, 1]);
+        let mut bytes = ByteParser::from(vec![1, 1]);
         assert!(Alert::from_bytes(&mut bytes).is_err());
         // Too long alert data
-        let mut bytes = VecDeque::from([2, 50, 1]);
+        let mut bytes = ByteParser::from(vec![2, 50, 1]);
         assert!(Alert::from_bytes(&mut bytes).is_err());
     }
 }

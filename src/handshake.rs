@@ -1,9 +1,11 @@
 #![allow(clippy::module_name_repetitions)]
 use crate::extensions::{ByteSerializable, Extension};
+use crate::handshake::cipher_suites::CipherSuite;
+use crate::parser::ByteParser;
 use std::collections::VecDeque;
 
 pub type ProtocolVersion = u16;
-type Random = [u8; 32];
+pub type Random = [u8; 32];
 
 pub const TLS_VERSION_COMPATIBILITY: ProtocolVersion = 0x0303;
 pub const TLS_VERSION_1_3: ProtocolVersion = 0x0304;
@@ -43,9 +45,9 @@ pub enum HandshakeMessage {
     EndOfEarlyData,
     EncryptedExtensions,
     CertificateRequest,
-    Certificate,
+    Certificate(Certificate),
     CertificateVerify,
-    Finished,
+    Finished(Finished),
     NewSessionTicket,
     KeyUpdate,
 }
@@ -71,12 +73,84 @@ impl ByteSerializable for Handshake {
             HandshakeMessage::ClientHello(client_hello) => {
                 bytes.extend_from_slice(&client_hello.as_bytes()?);
             }
+            HandshakeMessage::Finished(finished) => {
+                bytes.extend_from_slice(&finished.as_bytes()?);
+            }
             _ => {}
         }
         Some(bytes)
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> std::io::Result<Box<Self>> {
+    /// Parse the bytes into a `Handshake` struct.
+    /// We only support `ServerHello`, `Certificate`, `CertificateVerify` and `Finished` messages.
+    fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
+        let hs_type = match bytes.get_u8() {
+            Some(1) => HandshakeType::ClientHello,
+            Some(2) => HandshakeType::ServerHello,
+            Some(11) => HandshakeType::Certificate,
+            Some(15) => HandshakeType::CertificateVerify,
+            Some(20) => HandshakeType::Finished,
+            e => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Invalid handshake type: {e:?}"),
+                ))
+            }
+        };
+        let msg_length = bytes.get_u24().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid handshake message length",
+            )
+        })?;
+        let hs_message = match hs_type {
+            HandshakeType::ClientHello => {
+                let client_hello = ClientHello::from_bytes(bytes)?;
+                HandshakeMessage::ClientHello(*client_hello)
+            }
+            HandshakeType::ServerHello => {
+                let server_hello = ServerHello::from_bytes(bytes)?;
+                HandshakeMessage::ServerHello(*server_hello)
+            }
+            HandshakeType::Certificate => {
+                let certificate = Certificate::from_bytes(bytes)?;
+                HandshakeMessage::Certificate(*certificate)
+            }
+            HandshakeType::Finished => {
+                let finished = Finished::from_bytes(bytes)?;
+                HandshakeMessage::Finished(*finished)
+            }
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid handshake message type",
+                ))
+            }
+        };
+        Ok(Box::from(Handshake {
+            msg_type: hs_type,
+            length: msg_length,
+            message: hs_message,
+        }))
+    }
+}
+
+/// `Finished` message is the final message in the Authentication Block.
+#[derive(Debug, Clone)]
+pub struct Finished {
+    pub verify_data: Vec<u8>, // length can be presented with single byte
+}
+impl ByteSerializable for Finished {
+    fn as_bytes(&self) -> Option<Vec<u8>> {
+        let mut bytes = Vec::new();
+        match u8::try_from(self.verify_data.len()) {
+            Ok(len) => bytes.push(len),
+            Err(_) => return None,
+        }
+        bytes.extend_from_slice(&self.verify_data);
+        Some(bytes)
+    }
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
     }
 }
@@ -86,7 +160,7 @@ impl ByteSerializable for Handshake {
 ///       a `legacy_version` of 0x0303 and a `supported_versions` extension
 ///       present with 0x0304 as the highest version indicated therein.
 ///       (See Appendix D for details about backward compatibility.)
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ClientHello {
     pub legacy_version: ProtocolVersion, // 2 bytes to represent
     pub random: Random,                  // Static 32 bytes, no length prefix
@@ -155,26 +229,8 @@ impl ByteSerializable for ClientHello {
         Some(bytes)
     }
 
-    fn from_bytes(_bytes: &mut VecDeque<u8>) -> std::io::Result<Box<Self>> {
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
-    }
-}
-
-/// Debug method prints data also in tag-length-value format
-/// To use it, just call object as `dbg!(&client_hello)`, for example
-impl std::fmt::Debug for ClientHello {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClientHello")
-            .field("legacy_version", &self.version_bytes())
-            .field("random", &self.random_bytes())
-            .field("legacy_session_id", &self.session_id_bytes())
-            .field("cipher_suites", &self.cipher_suites_bytes())
-            .field(
-                "legacy_compression_methods",
-                &self.compression_methods_bytes(),
-            )
-            .field("extensions", &self.extensions)
-            .finish()
     }
 }
 
@@ -187,6 +243,85 @@ pub struct ServerHello {
     pub cipher_suite: cipher_suites::CipherSuite,
     pub legacy_compression_method: u8,
     pub extensions: Vec<Extension>, // length of the data can be 6..2^16-1 (2 bytes to present)
+}
+impl ByteSerializable for ServerHello {
+    fn as_bytes(&self) -> Option<Vec<u8>> {
+        todo!()
+    }
+    fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
+        let legacy_version = bytes.get_u16().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid ServerHello legacy version",
+            )
+        })?;
+        let random: Random = bytes
+            .get_bytes(32)
+            .ok_or_else(ByteParser::insufficient_data)?
+            .try_into()
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid ServerHello random",
+                )
+            })?;
+        let session_id_length = bytes.get_u8().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid ServerHello session id length",
+            )
+        })?;
+        let session_id = bytes.get_bytes(session_id_length as usize).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid ServerHello session id",
+            )
+        })?;
+        let cipher_suite: CipherSuite = bytes
+            .get_bytes(2)
+            .ok_or_else(ByteParser::insufficient_data)?
+            .try_into()
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid ServerHello cipher suite",
+                )
+            })?;
+        let compression_method = bytes.get_u8().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid ServerHello compression method",
+            )
+        })?;
+        let extension_length = bytes.get_u16().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid ServerHello extension length",
+            )
+        })?;
+        let mut extensions = Vec::new();
+        let extension_bytes = bytes.get_bytes(extension_length as usize).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid ServerHello extension bytes",
+            )
+        })?;
+        let mut ext_parser = ByteParser::new(VecDeque::from(extension_bytes));
+
+        while !ext_parser.deque.is_empty() {
+            let extension = Extension::from_bytes(&mut ext_parser)?;
+            extensions.push(*extension);
+        }
+
+        Ok(Box::from(ServerHello {
+            legacy_version,
+            random,
+            legacy_session_id_echo: session_id,
+            cipher_suite,
+            legacy_compression_method: compression_method,
+            extensions,
+        }))
+    }
 }
 
 /// `CertificateType` which is presented with 1-byte enum values
@@ -208,4 +343,13 @@ pub struct CertificateEntry {
 pub struct Certificate {
     pub certificate_request_context: Vec<u8>, // length of the data can be 0..255 (1 byte to present)
     pub certificate_list: Vec<CertificateEntry>, // length of the data can be 0..2^24-1 (3 bytes to present)
+}
+
+impl ByteSerializable for Certificate {
+    fn as_bytes(&self) -> Option<Vec<u8>> {
+        todo!("Implement Certificate::as_bytes")
+    }
+    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
+        todo!("Implement Certificate::from_bytes")
+    }
 }

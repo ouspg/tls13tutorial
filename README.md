@@ -92,7 +92,7 @@ includes the `ServerHello` message.
 
 As a result, the following output log can be seen:
 
-```prolog
+```scala
 RUST_LOG=info cargo run cloudflare.com:443
     Finished dev [unoptimized + debuginfo] target(s) in 0.14s
      Running `target/debug/tls13tutorial 'cloudflare.com:443'`
@@ -108,9 +108,10 @@ RUST_LOG=info cargo run cloudflare.com:443
 [2024-03-29T11:27:53Z ERROR tls13tutorial] Unexpected response type: ApplicationData
 ```
 
-Since the server gets all the required information from the initial `ServerHello` request, it can start sending encrypted `ApplicationData`, which contains encrypted extensions and certificates. 
+Since the server gets all the required information from the initial `ServerHello` request, it can start sending
+encrypted `ApplicationData`, which contains encrypted extensions and certificates.
 
-The first steps in completing the handshake would decode and decrypt those blocks. 
+The first steps in completing the handshake would decode and decrypt those blocks.
 
 ## Type-Length-Value (TLV) pattern
 
@@ -123,11 +124,14 @@ For example, the lowest layer in the TLS protocol uses the
 so-called [Record Protocol](https://datatracker.ietf.org/doc/html/rfc8446#section-5).
 
 It wraps the higher-level protocols, by following the idea of TLV.
-To see that in practice, we can take a look at the TLS Record [ASN.1 definition](https://datatracker.ietf.org/doc/html/rfc8446#appendix-B.1) and `TLSPlaintext` as an example for Rust data structure:
+To see that in practice, we can take a look at the TLS
+Record [ASN.1 definition](https://datatracker.ietf.org/doc/html/rfc8446#appendix-B.1) and `TLSRecord` as an example
+for Rust data structure:
 
 ```rust
 pub type ProtocolVersion = u16;
 
+// Max value is 255 (1 byte to represent)
 #[derive(Debug, Copy, Clone)]
 pub enum ContentType {
     Invalid = 0,
@@ -138,13 +142,12 @@ pub enum ContentType {
 }
 
 #[derive(Debug, Clone)]
-pub struct TLSPlaintext {
+pub struct TLSRecord {
     pub record_type: ContentType,
-    pub legacy_record_version: ProtocolVersion,
     // 2 bytes to represent
-    // always 0x0303 for TLS 1.3, except for the first ClientHello where it can be 0x0301
+    pub legacy_record_version: ProtocolVersion,
+    // length defined as 2 bytes. Maximum value is 2^14 or 2^14 + 256 depending on the `ContentType`
     pub length: u16,
-    // length defined as 2 bytes
     pub fragment: Vec<u8>, // fragment of size 'length'
 }
 ```
@@ -154,23 +157,27 @@ The data should be possible to deserialize to the original structure based on th
 If we want to serialize the structure of `TLSPlaintext` into bytes, we go in order every field and create the byte
 presentation.
 
-* A record field takes 1 byte to present as the max value for `ContentType` is defined to be 255 (`u8`). In this case, the
+* A record field takes 1 byte to present as the max value for `ContentType` is defined to be 255 (`u8`). In this case,
+  the
   type defines the data content of
   the `fragment` field. When you decode the byte stream, you know that the first byte is about `ContentType` and takes
   one byte.
-* `ProtocolVersion` has type `u16` and that takes 2 bytes to present this number. On the lower level, we differ a bit from
+* `ProtocolVersion` has type `u16` and that takes 2 bytes to present this number. On the lower level, we differ a bit
+  from
   basic TLV as the version must be defined early.
-* The length of the `fragment` is presented with 2 bytes. Here it has a separate field, but that is not always the case and
+* The length of the `fragment` is presented with 2 bytes. Here it has a separate field, but that is not always the case
+  and
   byte arrays with dynamic size should have always a length determinant.
 * `fragment` is an array of bytes with a size `length` based on the length of the previous.
 
-TLS Record protocol has the plaintext version and ciphertext version. On the previous, we see the plaintext version.
+TLS Record protocol has the plaintext version and ciphertext version.
 
 ## Basics of implementing the decoders
 
 The base project reads all the data from the TCP stream
 into the [VecDeque](https://doc.rust-lang.org/std/collections/struct.VecDeque.html) buffer.
-It might not be the most efficient way to parse bytes, but it allows taking chunks or single bytes without the need to move or
+It might not be the most efficient way to parse bytes, but it allows taking chunks or single bytes without the need to
+move or
 clone the remaining data in the memory.
 From a learning point of view, it can be better than parsing traditional vectors or byte slices.
 
@@ -181,7 +188,8 @@ construct the object, and the leftover data is still in the original buffer, wai
 You can try to parse raw byte slices, but be warned about bugs! `VecDeque` can also panic with incorrect index usage.
 
 > [!Note]
-> There is already an abraction for `VecDeque` to reduce the repetition of code in [parser.rs](src/parser.rs). You are free to improve this further. There can be bugs already.
+> There is already an abraction for `VecDeque` to reduce the repetition of code in [parser.rs](src/parser.rs). You are
+> free to improve this further. There can be bugs already.
 
 ## Functional testing (positive and negative)
 
