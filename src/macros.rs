@@ -17,3 +17,17 @@ macro_rules! round_trip {
         pretty_assertions::assert_eq!(value, *decoded_value);
     }};
 }
+
+/// A macro for fuzzing. Decode to struct and test if encoding matches the input bytes in case of error
+#[macro_export]
+macro_rules! fuzz_round_trip {
+    ($typ:ty, $value:expr) => {{
+        let backup = $value.clone();
+        let mut parser = ByteParser::from($value.to_vec());
+        if let Ok(decoded_value) = <$typ>::from_bytes(&mut parser) {
+            if let Some(actual_encoding) = decoded_value.as_bytes() {
+                assert_eq!(actual_encoding, backup.to_vec());
+            }
+        }
+    }};
+}

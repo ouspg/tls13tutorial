@@ -96,19 +96,30 @@ They are left on purpose to give somewhat easy starting point.
 As a result, the following output log can be seen:
 
 ```scala
-RUST_LOG=info cargo run cloudflare.com:443
-    Finished dev [unoptimized + debuginfo] target(s) in 0.14s
+RUST_BACKTRACE=1 RUST_LOG=info cargo run cloudflare.com:443
+    Finished dev [unoptimized + debuginfo] target(s) in 0.02s
      Running `target/debug/tls13tutorial 'cloudflare.com:443'`
-[2024-03-29T11:27:53Z INFO  tls13tutorial] Successfully connected to the server 'cloudflare.com:443'.
-[2024-03-29T11:27:53Z INFO  tls13tutorial] The handshake request has been sent...
-[2024-03-29T11:27:53Z INFO  tls13tutorial] Response TLS Record received!
-[2024-03-29T11:27:53Z INFO  tls13tutorial] ServerHello message received: ServerHello { legacy_version: 771, random: [226, 253, 128, 13, 165, 143, 153, 128, 84, 112, 255, 66, 14, 115, 40, 43, 51, 192, 6, 203, 183, 194, 31, 181, 89, 196, 158, 49, 236, 101, 213, 244], legacy_session_id_echo: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31], cipher_suite: [19, 3], legacy_compression_method: 0, extensions: [Extension { extension_type: KeyShare, extension_data: [0, 29, 0, 32, 46, 95, 194, 53, 33, 72, 185, 229, 227, 24, 121, 10, 142, 80, 231, 145, 220, 83, 25, 28, 42, 115, 52, 59, 6, 110, 104, 20, 93, 93, 129, 114] }, Extension { extension_type: SupportedVersions, extension_data: [3, 4] }] }
-[2024-03-29T11:27:53Z INFO  tls13tutorial] Response TLS Record received!
-[2024-03-29T11:27:53Z ERROR tls13tutorial] Unexpected response type: ChangeCipherSpec
-[2024-03-29T11:27:53Z INFO  tls13tutorial] Response TLS Record received!
-[2024-03-29T11:27:53Z ERROR tls13tutorial] Unexpected response type: ApplicationData
-[2024-03-29T11:27:53Z INFO  tls13tutorial] Response TLS Record received!
-[2024-03-29T11:27:53Z ERROR tls13tutorial] Unexpected response type: ApplicationData
+[INFO  tls13tutorial] Successfully connected to the server 'cloudflare.com:443'.
+[INFO  tls13tutorial] Sending ClientHello as follows...
+
+ClientHello, Length=163
+  client_version=0x303
+  random (len=32): 000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F
+  session_id (len=32): 000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F
+  cipher_suites (len=1)
+    [0x13, 0x03] TLS_CHACHA20_POLY1305_SHA256
+  compression_methods (len=1): 00
+  extensions (len=88)
+    extension_type=supported_versions(43), length=3
+      data: 020304
+    extension_type=server_name(0), length=19
+      data: 001100000E636C6F7564666C6172652E636F6D
+    extension_type=supported_groups(10), length=4
+      data: 0002001D
+    extension_type=signature_algorithms(13), length=4
+      data: 00020807
+    extension_type=key_share(51), length=38
+      data: 0024001D00208F40C5ADB68F25624AE5B214EA767A6EC94D829D3D7B5E1AD1BA6F3E2138285F
 ```
 
 Since the server gets all the required information from the initial `ServerHello` request, it can start sending
@@ -239,17 +250,33 @@ for example, what is the output format when the `println!()` macro is used for t
 
 ## Fuzzing the project
 
-If you are using a Linux machine for development, starting fuzz testing with precise control is very straightforward.
+If you are using a Linux or MacOS machine for development, starting fuzz testing with precise control is very
+straightforward.
 There are many fuzzing libraries, that can be integrated to the project to get coverage-guided fuzzing.
 
 Fuzzing provides the stream of bytes for the interface you choose, and depending on the used backend, it will provide
 testing data and coverage-guided mutation to test the robustness of the selected functionality.
 
-* [libfuzzer](https://github.com/rust-fuzz/libfuzzer)
+* [libfuzzer with `cargo-fuzz`](https://github.com/rust-fuzz/libfuzzer)
 * [libAFL](https://github.com/AFLplusplus/LibAFL)
 
-In [fuzzing directory](fuzzing), `libfuzzer` is pre-configured.
-You need to use a Linux environment for that.
+In [fuzzing directory](fuzz), `cargo fuzz` is pre-configured.
+As one fuzzing target, TLS `Alert` protocol is used as an example.
+
+See [project](https://github.com/rust-fuzz/cargo-fuzz) and
+its [documentation](https://rust-fuzz.github.io/book/cargo-fuzz/tutorial.html).
+
+You need to use a Linux or MacOS environment with `nightly` compiler for that.
+
+To start fuzzing, simply run
+
+```shell
+cargo fuzz run fuzz_target_1
+```
+
+The project has dual target - see [src/lib.rs](src/lib.rs) which can be used as interface for fuzzing (you can import
+everything defined in there to fuzz target).
+Modify as needed. You can already directly import other data structures for fuzzing.
 
 ## Debugging and comparing to OpenSSL
 

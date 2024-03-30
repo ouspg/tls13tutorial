@@ -7,6 +7,7 @@ pub struct ByteParser {
     pub deque: VecDeque<u8>,
 }
 impl ByteParser {
+    #[must_use]
     pub fn new(deque: VecDeque<u8>) -> Self {
         Self { deque }
     }
@@ -42,11 +43,17 @@ impl ByteParser {
         self.deque.drain(..).collect()
     }
     /// Get the length of the deque
+    #[must_use]
     pub fn len(&self) -> usize {
         self.deque.len()
     }
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.deque.is_empty()
+    }
     /// Generate an error for insufficient data
     /// Useful when mapping above Options to Results
+    #[must_use]
     pub fn insufficient_data() -> std::io::Error {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -61,6 +68,13 @@ impl From<Vec<u8>> for ByteParser {
     fn from(bytes: Vec<u8>) -> Self {
         Self {
             deque: VecDeque::from(bytes),
+        }
+    }
+}
+impl From<&[u8]> for ByteParser {
+    fn from(bytes: &[u8]) -> Self {
+        Self {
+            deque: VecDeque::from(bytes.to_vec()),
         }
     }
 }

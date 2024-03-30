@@ -239,8 +239,15 @@ impl ByteSerializable for SupportedVersions {
 #[derive(Debug, Clone)]
 pub struct ServerName {
     pub name_type: NameType,
-    pub name: Vec<u8>,
+    pub host_name: HostName,
 }
+impl std::fmt::Display for ServerName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = String::from_utf8_lossy(&self.host_name);
+        writeln!(f, "{:?}: {}", self.name_type, name)
+    }
+}
+
 /// `NameType` where maximum value be `u8::MAX` (1 byte)
 #[derive(Debug, Copy, Clone)]
 pub enum NameType {
@@ -253,6 +260,15 @@ type HostName = Vec<u8>;
 pub struct ServerNameList {
     pub server_name_list: Vec<ServerName>,
 }
+impl std::fmt::Display for ServerNameList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for server_name in &self.server_name_list {
+            writeln!(f, "{server_name}")?;
+        }
+        Ok(())
+    }
+}
+
 impl ByteSerializable for ServerNameList {
     fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
@@ -260,12 +276,12 @@ impl ByteSerializable for ServerNameList {
             bytes.push(server_name.name_type as u8);
             // 2 byte length determinant for the ASCII byte presentation of the name
             bytes.extend_from_slice(
-                u16::try_from(server_name.name.len())
+                u16::try_from(server_name.host_name.len())
                     .ok()?
                     .to_be_bytes()
                     .as_ref(),
             );
-            bytes.extend_from_slice(&server_name.name);
+            bytes.extend_from_slice(&server_name.host_name);
         }
         // 2 byte length determinant for the whole `ServerNameList`
         bytes.splice(
@@ -559,7 +575,7 @@ mod tests {
         let server_name_list = ServerNameList {
             server_name_list: vec![ServerName {
                 name_type: NameType::HostName,
-                name: "example.ulfheim.net".as_bytes().to_vec(),
+                host_name: "example.ulfheim.net".as_bytes().to_vec(),
             }],
         };
         let bytes = server_name_list.as_bytes().unwrap();
@@ -580,7 +596,7 @@ mod tests {
             extension_data: ExtensionData::ServerName(ServerNameList {
                 server_name_list: vec![ServerName {
                     name_type: NameType::HostName,
-                    name: "example.ulfheim.net".as_bytes().to_vec(),
+                    host_name: "example.ulfheim.net".as_bytes().to_vec(),
                 }],
             }),
         };

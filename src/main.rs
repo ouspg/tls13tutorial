@@ -1,40 +1,24 @@
 #![allow(dead_code)]
-//! # TLS 1.3 client protocol implementation in Rust
-//!
-//! Described data structures follow the naming convention and structure of the standard specification
-//!
-//! [Standard](https://datatracker.ietf.org/doc/html/rfc8446)
-//!
-//! [Visual guide](https://tls13.xargs.org/)
-mod alert;
-mod display;
-mod extensions;
-mod handshake;
-mod macros;
-mod parser;
-mod tls_record;
-use alert::Alert;
-use display::to_hex;
-use extensions::{
-    ByteSerializable, Extension, ExtensionData, ExtensionOrigin, ExtensionType,
-    KeyShareClientHello, KeyShareEntry, NameType, NamedGroup, NamedGroupList, ServerName,
-    ServerNameList, SignatureScheme, SupportedSignatureAlgorithms, SupportedVersions,
-};
-use handshake::{
-    cipher_suites, ClientHello, Handshake, HandshakeMessage, HandshakeType, Random,
-    TLS_VERSION_1_3, TLS_VERSION_COMPATIBILITY,
-};
 use log::{debug, error, info, warn};
-use parser::ByteParser;
 #[cfg(not(debug_assertions))]
 use rand::rngs::OsRng;
 use std::collections::VecDeque;
 use std::io::{self, Read as SocketRead, Write as SocketWrite};
 use std::net::TcpStream;
-use tls_record::{ContentType, TLSRecord};
+use tls13tutorial::alert::Alert;
+use tls13tutorial::display::to_hex;
+use tls13tutorial::extensions::{
+    ByteSerializable, Extension, ExtensionData, ExtensionOrigin, ExtensionType,
+    KeyShareClientHello, KeyShareEntry, NameType, NamedGroup, NamedGroupList, ServerName,
+    ServerNameList, SignatureScheme, SupportedSignatureAlgorithms, SupportedVersions, VersionKind,
+};
+use tls13tutorial::handshake::{
+    cipher_suites, ClientHello, Handshake, HandshakeMessage, HandshakeType, Random,
+    TLS_VERSION_1_3, TLS_VERSION_COMPATIBILITY,
+};
+use tls13tutorial::tls_record::{ContentType, TLSRecord};
 
 // Cryptographic libraries
-use crate::extensions::VersionKind;
 // use chacha20poly1305::{
 //     aead::{Aead, KeyInit, Payload},
 //     ChaCha20Poly1305,
@@ -111,7 +95,7 @@ impl HandshakeKeys {
     /// Specific for SHA256 hash function
     /// See especially Section 7. in the standard
     /// This function works correctly for the initial key calculation, to finish the handshake
-    /// you need to also calculate session keys later on
+    /// you need to also other keys later on following the same idea.
     fn key_schedule(&mut self, transcript_hash: &[u8]) {
         // Calculate the shared secret
         self.dh_shared_secret = Some(
@@ -170,7 +154,7 @@ impl HandshakeKeys {
     }
     /// Expand the secret with the label and transcript hash (hash bytes of the combination of messages)
     /// Label format is described in the RFC 8446 section 7.1
-    /// FIXME will panic on invalid lengths. Maybe someone notices this a bit of fuzzing..
+    /// FIXME will panic on invalid lengths. Maybe someone notices this with a bit of fuzzing..
     #[must_use]
     fn derive_secret(
         secret: &[u8],
@@ -195,27 +179,6 @@ impl HandshakeKeys {
     }
 }
 
-/// Get all TLS Records from the byte buffer.
-/// Assume we get multiple TLS Records in a single response.
-/// # Errors
-/// Returns an error if the data is not completely parsed as TLS records
-pub fn get_records(buffer: VecDeque<u8>) -> Result<Vec<TLSRecord>, io::Error> {
-    let mut records = Vec::new();
-    let mut parser = ByteParser::new(buffer);
-    while !parser.deque.is_empty() {
-        match TLSRecord::from_bytes(&mut parser) {
-            Ok(response) => {
-                info!("Response TLS Record received!");
-                records.push(*response);
-            }
-            Err(e) => {
-                error!("Failed to receive the response: {e}");
-            }
-        }
-    }
-    Ok(records)
-}
-
 /// Process the data from TCP stream in the chunks of 4096 bytes and
 /// read the response data into a buffer in a form of Queue for easier parsing.
 fn process_tcp_stream(mut stream: &mut TcpStream) -> io::Result<VecDeque<u8>> {
@@ -227,7 +190,7 @@ fn process_tcp_stream(mut stream: &mut TcpStream) -> io::Result<VecDeque<u8>> {
         match reader.read(&mut chunk) {
             Ok(0) => break, // Connection closed by the sender
             Ok(n) => {
-                debug!("Received {n} bytes of data.");
+                info!("Received {n} bytes of data.");
                 buffer.extend(&chunk[..n]);
             }
             Err(e) => {
@@ -287,7 +250,7 @@ fn main() {
                         extension_data: ExtensionData::ServerName(ServerNameList {
                             server_name_list: vec![ServerName {
                                 name_type: NameType::HostName,
-                                name: hostname.to_string().as_bytes().to_vec(),
+                                host_name: hostname.to_string().as_bytes().to_vec(),
                             }],
                         }),
                     },
@@ -321,6 +284,9 @@ fn main() {
             };
             info!("Sending ClientHello as follows...\n");
             println!("{client_hello}");
+            // Alternative styles
+            // dbg!(&client_hello);
+            // println!("{client_hello:#?}");
             let handshake = Handshake {
                 msg_type: HandshakeType::ClientHello,
                 length: u32::try_from(
@@ -347,7 +313,7 @@ fn main() {
             match stream.write_all(
                 &request_record
                     .as_bytes()
-                    .expect("Failed to serialize TLSPlaintext"),
+                    .expect("Failed to serialize TLS Record into bytes"),
             ) {
                 Ok(()) => {
                     info!("The handshake request has been sent...");
@@ -358,10 +324,10 @@ fn main() {
             }
             // Read all the response data into a `VecDeque` buffer
             let buffer = process_tcp_stream(&mut stream).unwrap_or_else(|e| {
-                error!("Failed to read the response: {e}");
+                error!("Failed to read the TCP response: {e}");
                 std::process::exit(1)
             });
-            let response_records = get_records(buffer).unwrap_or_else(|e| {
+            let response_records = tls13tutorial::get_records(buffer).unwrap_or_else(|e| {
                 error!("Failed to process the records: {e}");
                 std::process::exit(1)
             });
