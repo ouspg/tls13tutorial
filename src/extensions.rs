@@ -1,54 +1,85 @@
+//! # TLS Extensions and their encoding/decoding
+//!
+//! Includes `ByteSerializable` trait for converting structures into bytes and constructing again.
 use crate::handshake::ProtocolVersion;
 use crate::parser::ByteParser;
-use std::io;
+use ::log::{debug, warn};
 
+/// `ByteSerializable` trait is used to serialize and deserialize the struct into bytes
 pub trait ByteSerializable {
-    // Returns the byte representation of the object if possible
+    /// Returns the byte representation of the object if possible
     fn as_bytes(&self) -> Option<Vec<u8>>;
-    // Attempts to parse the bytes into a struct object implementing this trait
+    /// Attempts to parse the bytes into a struct object implementing this trait
     fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>>;
+}
+
+/// Helper to identify the origin of the extension (client or server)
+/// Extension data format is different for client and server on some cases
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum ExtensionOrigin {
+    Client,
+    Server,
 }
 
 /// `Extension` is wrapper for any TLS extension
 #[derive(Debug, Clone)]
 pub struct Extension {
+    pub origin: ExtensionOrigin,
     pub extension_type: ExtensionType, // Defined maximum value can be 65535, takes 2 bytes to present
-    pub extension_data: Vec<u8>,       // length of the data can be 0..2^16-1 (2 bytes to present)
+    pub extension_data: ExtensionData, // length of the data can be 0..2^16-1 (2 bytes to present)
 }
-impl ByteSerializable for Extension {
-    fn as_bytes(&self) -> Option<Vec<u8>> {
+
+impl Extension {
+    pub(crate) fn as_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice((self.extension_type as u16).to_be_bytes().as_ref());
+        let ext_bytes = self.extension_data.as_bytes()?;
         // 2 byte length determinant for the `extension_data`
-        bytes.extend_from_slice(
-            u16::try_from(self.extension_data.len())
-                .ok()?
-                .to_be_bytes()
-                .as_ref(),
-        );
-        bytes.extend_from_slice(&self.extension_data);
+        bytes.extend(u16::try_from(ext_bytes.len()).ok()?.to_be_bytes());
+        bytes.extend_from_slice(&ext_bytes);
         Some(bytes)
     }
 
-    fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        let ext_type = bytes
-            .get_u16()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid extension type"))?;
+    pub(crate) fn from_bytes(
+        bytes: &mut ByteParser,
+        origin: ExtensionOrigin,
+    ) -> std::io::Result<Box<Self>> {
+        let ext_type = bytes.get_u16().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid extension type")
+        })?;
+        debug!("ExtensionType: {:?}", ext_type);
 
         let ext_data_len = bytes.get_u16().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "Invalid extension data length")
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid extension data length",
+            )
         })?;
-        let ext_data = bytes
-            .get_bytes(ext_data_len as usize)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid extension data"))?;
+        debug!("Extension data length: {}", ext_data_len);
+        let ext_data = bytes.get_bytes(ext_data_len as usize);
+        let mut ext_bytes = ByteParser::from(ext_data);
+        debug!("Extension data: {:?}", ext_bytes);
+        // let extension_data = match ext_type {
+        // TODO Implement the rest of the extension types
+        //     0 => ExtensionData::ServerName(*ServerNameList::from_bytes(&mut ext_bytes)?),
+        //     _ => {
+        //         warn!("Unknown ExtensionType: {}", ext_type);
+        //         return Err(std::io::Error::new(
+        //             std::io::ErrorKind::InvalidData,
+        //             "Invalid extension data",
+        //         ));
+        //     }
+        // };
+        // Use placeholder `Unserialized` for now, not all extension data types are implemented
         Ok(Box::new(Extension {
+            origin,
             extension_type: ext_type.into(),
-            extension_data: ext_data,
+            extension_data: ExtensionData::Unserialized(ext_bytes.drain()),
         }))
     }
 }
 
-/// `ExtensionType` where maximum value be 2^16-1 (2 bytes to present)
+/// `ExtensionType` where maximum value can be 2^16-1 (2 bytes to present)
 #[derive(Debug, Copy, Clone)]
 pub enum ExtensionType {
     ServerName = 0,
@@ -74,7 +105,7 @@ pub enum ExtensionType {
     SignatureAlgorithmsCert = 50,
     KeyShare = 51,
 }
-/// By using `From` trait, we can convert `u16` to `ExtensionType`, e.g. by using .into()
+/// By using `From` trait, we can convert `u16` to `ExtensionType`, e.g. by using `.into()`
 impl From<u16> for ExtensionType {
     fn from(value: u16) -> Self {
         match value {
@@ -100,35 +131,100 @@ impl From<u16> for ExtensionType {
             49 => ExtensionType::PostHandshakeAuth,
             50 => ExtensionType::SignatureAlgorithmsCert,
             51 => ExtensionType::KeyShare,
-            _ => ExtensionType::ServerName,
+            _ => {
+                warn!("Unknown ExtensionType: {}", value);
+                ExtensionType::ServerName
+            }
         }
     }
 }
-
+/// `ExtensionData` is a wrapper for any data in the extension
+/// TODO not all extension data types are implemented or added
 #[derive(Debug, Clone)]
-pub struct SupportedVersions {
-    pub versions: Vec<ProtocolVersion>, // length of the data can be 2..254 on client, 1 byte to present
+pub enum ExtensionData {
+    ServerName(ServerNameList),
+    SupportedGroups(NamedGroupList),
+    SignatureAlgorithms(SupportedSignatureAlgorithms),
+    SupportedVersions(SupportedVersions),
+    KeyShareClientHello(KeyShareClientHello),
+    KeyShareServerHello(KeyShareServerHello),
+    PskKeyExchangeModes(PskKeyExchangeModes),
+    Unserialized(Vec<u8>), // Placeholder for unimplemented extension data
 }
-impl ByteSerializable for SupportedVersions {
+
+impl ByteSerializable for ExtensionData {
     fn as_bytes(&self) -> Option<Vec<u8>> {
-        let mut bytes = Vec::new();
-        for version in &self.versions {
-            bytes.extend_from_slice(&version.to_be_bytes());
+        match self {
+            ExtensionData::ServerName(server_name_list) => server_name_list.as_bytes(),
+            ExtensionData::SupportedGroups(named_group_list) => named_group_list.as_bytes(),
+            ExtensionData::SignatureAlgorithms(supported_signature_algorithms) => {
+                supported_signature_algorithms.as_bytes()
+            }
+            ExtensionData::SupportedVersions(supported_versions) => supported_versions.as_bytes(),
+            ExtensionData::KeyShareClientHello(key_share_client_hello) => {
+                key_share_client_hello.as_bytes()
+            }
+            ExtensionData::KeyShareServerHello(key_share_server_hello) => {
+                key_share_server_hello.as_bytes()
+            }
+            ExtensionData::PskKeyExchangeModes(psk_key_exchange_modes) => {
+                psk_key_exchange_modes.as_bytes()
+            }
+            ExtensionData::Unserialized(data) => Some(data.clone()),
         }
-        // 1 byte length determinant for `versions`
-        bytes.splice(
-            0..0,
-            u8::try_from(bytes.len())
-                .ok()?
-                .to_be_bytes()
-                .iter()
-                .copied(),
-        );
-        Some(bytes)
     }
 
     fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
         todo!()
+    }
+}
+
+/// Kinds of `ProtocolVersion` - client offers multiple versions where a server selects one.
+#[derive(Debug, Clone)]
+pub enum VersionKind {
+    Suggested(Vec<ProtocolVersion>), // length of the data can be 2..254 on client, 1 byte to present
+    Selected(ProtocolVersion),
+}
+
+/// # Supported versions extension
+#[derive(Debug, Clone)]
+pub struct SupportedVersions {
+    pub version: VersionKind,
+}
+
+impl ByteSerializable for SupportedVersions {
+    fn as_bytes(&self) -> Option<Vec<u8>> {
+        let mut bytes = Vec::new();
+        match &self.version {
+            VersionKind::Suggested(versions) => {
+                for version in versions {
+                    bytes.extend_from_slice(&version.to_be_bytes());
+                }
+                // 1 byte length determinant for `versions`
+                bytes.splice(
+                    0..0,
+                    u8::try_from(bytes.len())
+                        .ok()?
+                        .to_be_bytes()
+                        .iter()
+                        .copied(),
+                );
+            }
+            VersionKind::Selected(version) => {
+                bytes.extend_from_slice(&version.to_be_bytes());
+            }
+        }
+        Some(bytes)
+    }
+
+    fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
+        // It takes at least 3 bytes to present ClientHello
+        // Not the best for validation, but it's a start
+        if bytes.len() > 2 {
+            todo!("We don't support receiving ClientHello")
+        } else {
+            todo!("Serialize Selected variant")
+        }
     }
 }
 
@@ -137,8 +233,8 @@ impl ByteSerializable for SupportedVersions {
 /// as understood by the client.  The hostname is represented as a byte
 /// string using ASCII encoding without a trailing dot.  This allows the
 /// support of internationalized domain names through the use of A-labels
-/// defined in [RFC5890].  DNS hostnames are case-insensitive.  The
-/// algorithm to compare hostnames is described in [RFC5890], Section
+/// defined in RFC5890.  DNS hostnames are case-insensitive.  The
+/// algorithm to compare hostnames is described in RFC5890, Section
 /// 2.3.2.4.
 #[derive(Debug, Clone)]
 pub struct ServerName {
@@ -150,6 +246,7 @@ pub struct ServerName {
 pub enum NameType {
     HostName = 0,
 }
+/// `HostName` is a byte string using ASCII encoding of host without a trailing dot
 type HostName = Vec<u8>;
 /// `ServerNameList` is a list of `ServerName` structures, where maximum length be `u16::MAX` (2 bytes)
 #[derive(Debug, Clone)]
@@ -183,7 +280,7 @@ impl ByteSerializable for ServerNameList {
     }
 
     fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+        todo!("Implement ServerNameList from_bytes")
     }
 }
 
@@ -229,7 +326,7 @@ impl ByteSerializable for SignatureScheme {
     }
 
     fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+        todo!("Implement SignatureScheme from_bytes")
     }
 }
 #[derive(Debug, Clone)]
@@ -255,7 +352,7 @@ impl ByteSerializable for SupportedSignatureAlgorithms {
     }
 
     fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+        todo!("Implement SupportedSignatureAlgorithms from_bytes")
     }
 }
 
@@ -292,8 +389,23 @@ impl ByteSerializable for NamedGroup {
         }
     }
 
-    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+    fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
+        match bytes.get_u16().ok_or_else(ByteParser::insufficient_data)? {
+            0x0017 => Ok(Box::new(NamedGroup::Secp256r1)),
+            0x0018 => Ok(Box::new(NamedGroup::Secp384r1)),
+            0x0019 => Ok(Box::new(NamedGroup::Secp521r1)),
+            0x001D => Ok(Box::new(NamedGroup::X25519)),
+            0x001E => Ok(Box::new(NamedGroup::X448)),
+            0x0100 => Ok(Box::new(NamedGroup::Ffdhe2048)),
+            0x0101 => Ok(Box::new(NamedGroup::Ffdhe3072)),
+            0x0102 => Ok(Box::new(NamedGroup::Ffdhe4096)),
+            0x0103 => Ok(Box::new(NamedGroup::Ffdhe6144)),
+            0x0104 => Ok(Box::new(NamedGroup::Ffdhe8192)),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid NamedGroup",
+            )),
+        }
     }
 }
 
@@ -320,7 +432,7 @@ impl ByteSerializable for NamedGroupList {
     }
 
     fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+        todo!("Implement NamedGroupList from_bytes")
     }
 }
 
@@ -346,7 +458,7 @@ impl ByteSerializable for KeyShareEntry {
     }
 
     fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+        todo!("Implement KeyShareEntry from_bytes")
     }
 }
 
@@ -377,7 +489,7 @@ impl ByteSerializable for KeyShareClientHello {
     }
 
     fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+        todo!("Implement KeyShareClientHello from_bytes")
     }
 }
 /// `key_share` extension data structure in `ServerHello`
@@ -391,8 +503,10 @@ impl ByteSerializable for KeyShareServerHello {
         self.server_share.as_bytes()
     }
 
-    fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+    fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
+        Ok(Box::new(KeyShareServerHello {
+            server_share: *KeyShareEntry::from_bytes(bytes)?,
+        }))
     }
 }
 
@@ -431,7 +545,7 @@ impl ByteSerializable for PskKeyExchangeModes {
     }
 
     fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+        todo!("Implement PskKeyExchangeModes from_bytes")
     }
 }
 
@@ -461,15 +575,14 @@ mod tests {
     #[test]
     fn test_extension_server_name_list() {
         let extension = Extension {
+            origin: ExtensionOrigin::Client,
             extension_type: ExtensionType::ServerName,
-            extension_data: ServerNameList {
+            extension_data: ExtensionData::ServerName(ServerNameList {
                 server_name_list: vec![ServerName {
                     name_type: NameType::HostName,
                     name: "example.ulfheim.net".as_bytes().to_vec(),
                 }],
-            }
-            .as_bytes()
-            .unwrap(),
+            }),
         };
         let bytes = extension.as_bytes().unwrap();
         assert_eq!(

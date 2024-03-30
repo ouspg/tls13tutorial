@@ -26,6 +26,8 @@ The project currently supports:
 * Key exchange with `X25519` and signatures with EdDSA (Elliptic Curve Diffie-Hellman key exchange using Curve25519 and
   Edwards-Curve Digital Signature Algorithm based on the same curve)
 
+Credits for Michael Driscoll about his excellent [TLS 1.3 illustration](https://tls13.xargs.org/).
+
 ## Quickstart for Rust
 
 We do not provide teaching for the language itself, but we can help on many issues.
@@ -33,7 +35,7 @@ If you have programmed with any low-level language, you should be able to grasp 
 unknown.
 
 If you fight with the compiler, it is just preventing potential bugs from the runtime instead.
-You have to adopt the idea that data is always owned.
+You have to adopt the idea that data is always owned by default.
 Read the chapter in Rust's book about [ownership.](https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html)
 
 This project attempts to avoid some complex features of Rust.
@@ -63,7 +65,7 @@ It is also important to get your IDE environment properly set up. For a beginner
       using [GitHub Copilot Chat with your code](https://docs.github.com/en/copilot/github-copilot-chat/about-github-copilot-chat).
       After that, you can even highlight specific code and ask questions or suggestions from the Copilot. But then
       again, do not use things blindly. However, *it is extremely useful for this project, since we write some
-      repetitive code*.
+      repetitive code and do large pattern matching*.
 * Use the student license for [JetBrains RustRover.](https://www.jetbrains.com/rust/)
     * You can apply the same as above also for RustRover.
 
@@ -88,7 +90,8 @@ The project implements the necessary data structures and cryptographic primitive
 message and convert it into raw bytes with correct length determinants.
 
 It also implements minimal data structures and decoders to parse the first TLS Record from the server response, which
-includes the `ServerHello` message.
+includes the `ServerHello` message. However, extensions are not parsed to correct structures.
+They are left on purpose to give somewhat easy starting point.
 
 As a result, the following output log can be seen:
 
@@ -111,7 +114,24 @@ RUST_LOG=info cargo run cloudflare.com:443
 Since the server gets all the required information from the initial `ServerHello` request, it can start sending
 encrypted `ApplicationData`, which contains encrypted extensions and certificates.
 
-The first steps in completing the handshake would decode and decrypt those blocks.
+**The first steps to continue with the project are:**
+
+* Implement decoders for missing required extensions to fully construct the extension types. Currently, extensions types
+  are identified but their inner data is left unparsed.
+* After that, you need to construct all the traffic keys for decrypting the rest of the handshake data.
+  Check [illustration](https://tls13.xargs.org/#server-handshake-keys-calc).
+    * Key Derivation functions are pre-implemented. You need to:
+        * Parse server's public key and add it to `HandshakeKeys` structure
+        * Calculate the transcript hash
+        * Use `key_schedule` function to calculate the keys and use the keys afterward.
+        * Implement decrypting function for `CHACHA20_POLY1305_SHA256`. You can
+          use [this](https://docs.rs/chacha20poly1305/latest/chacha20poly1305/) dependency (already in project). Not the
+          use of sequence counter.
+        * Now you can decrypt and continue finishing the handshake process until the server provides session tickets,
+          and go as far as you like.
+
+You can also see the documentation of this project in browser.
+Run `cargo doc --open`.
 
 ## Type-Length-Value (TLV) pattern
 
@@ -188,8 +208,8 @@ construct the object, and the leftover data is still in the original buffer, wai
 You can try to parse raw byte slices, but be warned about bugs! `VecDeque` can also panic with incorrect index usage.
 
 > [!Note]
-> There is already an abraction for `VecDeque` to reduce the repetition of code in [parser.rs](src/parser.rs). You are
-> free to improve this further. There can be bugs already.
+> There is already an abstraction for `VecDeque` to reduce the repetition of code in [parser.rs](src/parser.rs). You are
+> free to improve this further. There can be (intentional) bugs already.
 
 ## Functional testing (positive and negative)
 
@@ -230,3 +250,28 @@ testing data and coverage-guided mutation to test the robustness of the selected
 
 In [fuzzing directory](fuzzing), `libfuzzer` is pre-configured.
 You need to use a Linux environment for that.
+
+## Debugging and comparing to OpenSSL
+
+You can use Wireshark to check the first `ClientHello` and `ServerHello` messages.
+Data is mostly encrypted after these, but you can still see TLS Records with `Application Data` type afterward, while
+the inner
+content is encrypted.
+
+You can also see real packets by using OpenSSL.
+
+```shell
+openssl genpkey -algorithm X25519 -out custom_key.pem # Generate X25519 negotiation key
+
+openssl s_client -connect cloudflare.com:443 -tls1_3 \
+                 -keylogfile secrets.log \
+                 -key debug_key.pem \
+                 -msg -msgfile messages.log \
+                 -state -ciphersuites TLS_CHACHA20_POLY1305_SHA256 \
+                 -debug \
+                 -trace -nocommands -tlsextdebug
+```
+
+You can see the handshake data in `messages.log` file as unencrypted.
+
+Traffic secrets are in `secrets.log` file.

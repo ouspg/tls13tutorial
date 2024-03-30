@@ -1,5 +1,5 @@
 #![allow(clippy::module_name_repetitions)]
-/// Custom parser for parsing bytes from a `VecDeque<u8>`
+//! Custom parser for parsing bytes from a `VecDeque<u8>`
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
@@ -32,10 +32,10 @@ impl ByteParser {
             self.deque.drain(..4).collect::<Vec<u8>>().try_into().ok()?,
         ))
     }
-    /// Consume `count` bytes from the deque and convert to Vec<u8>
-    pub fn get_bytes(&mut self, count: usize) -> Option<Vec<u8>> {
-        // TODO bound check, will panic
-        Some(self.deque.drain(..count).collect::<Vec<u8>>())
+    /// Consume `count` bytes from the deque and convert to `Vec<u8>`
+    pub fn get_bytes(&mut self, count: usize) -> Vec<u8> {
+        // TODO bound check, will panic. Oops...
+        self.deque.drain(..count).collect::<Vec<u8>>()
     }
     /// Consume all bytes from the deque
     pub fn drain(&mut self) -> Vec<u8> {

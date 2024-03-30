@@ -1,3 +1,4 @@
+//! # TLS Alert Protocol
 #![allow(clippy::module_name_repetitions)]
 use crate::extensions::ByteSerializable;
 use crate::parser::ByteParser;
@@ -206,7 +207,7 @@ mod tests {
         // Invalid alert level
         let bytes = ByteParser::from(vec![3, 0]);
         // We clone since the function consumes the bytes, and we make multiple calls
-        assert!(Alert::from_bytes(&mut bytes.clone()).is_err());
+        assert!(Alert::from_bytes(&mut bytes.clone(),).is_err());
         // More precise tests for specific error just to demonstrate the error handling
         assert!(matches!(
             Alert::from_bytes(&mut bytes.clone()),
@@ -218,9 +219,9 @@ mod tests {
         ));
         // Invalid alert description
         let mut bytes = ByteParser::from(vec![1, 1]);
-        assert!(Alert::from_bytes(&mut bytes).is_err());
+        assert!(Alert::from_bytes(&mut bytes,).is_err());
         // Too long alert data
         let mut bytes = ByteParser::from(vec![2, 50, 1]);
-        assert!(Alert::from_bytes(&mut bytes).is_err());
+        assert!(Alert::from_bytes(&mut bytes,).is_err());
     }
 }

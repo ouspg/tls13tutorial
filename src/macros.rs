@@ -1,8 +1,9 @@
+//! Macros for test usage only
 // NO NEED TO MODIFY THIS FILE
 //
-// A macro for testing encoding/decoding for a generic type which implements ByteSerializable
-// Takes a type and an object created from the type, an expected byte array for the encoding result
-// Useful for testing both decoding and encoding
+/// A macro for testing encoding/decoding for a generic type which implements `ByteSerializable`
+/// Takes a type and an object created from the type, an expected byte array for the encoding result
+/// Useful for testing both decoding and encoding
 #[macro_export]
 macro_rules! round_trip {
     ($typ:ty, $value:expr, $expected:expr) => {{

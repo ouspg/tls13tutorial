@@ -1,5 +1,6 @@
+//! This module contains the structures and implementations for the handshake messages.
 #![allow(clippy::module_name_repetitions)]
-use crate::extensions::{ByteSerializable, Extension};
+use crate::extensions::{ByteSerializable, Extension, ExtensionOrigin};
 use crate::handshake::cipher_suites::CipherSuite;
 use crate::parser::ByteParser;
 use std::collections::VecDeque;
@@ -15,12 +16,43 @@ pub const TLS_VERSION_1_3: ProtocolVersion = 0x0304;
 /// Our client primarily supports ChaCha20-Poly1305 with SHA-256
 /// See more [here.](https://datatracker.ietf.org/doc/html/rfc8446#appendix-B.4)
 pub mod cipher_suites {
-    pub type CipherSuite = [u8; 2];
-    pub const TLS_AES_128_GCM_SHA256: CipherSuite = [0x13, 0x01];
-    pub const TLS_AES_256_GCM_SHA384: CipherSuite = [0x13, 0x02];
-    pub const TLS_CHACHA20_POLY1305_SHA256: CipherSuite = [0x13, 0x03];
-    pub const TLS_AES_128_CCM_SHA256: CipherSuite = [0x13, 0x04];
-    pub const TLS_AES_128_CCM_8_SHA256: CipherSuite = [0x13, 0x05];
+    #[derive(Debug, Copy, Clone)]
+    pub struct CipherSuite([u8; 2]);
+    impl CipherSuite {
+        pub fn as_ref(&self) -> &[u8] {
+            &self.0
+        }
+    }
+    impl From<[u8; 2]> for CipherSuite {
+        fn from(slice: [u8; 2]) -> Self {
+            CipherSuite(slice)
+        }
+    }
+    impl From<Vec<u8>> for CipherSuite {
+        fn from(slice: Vec<u8>) -> Self {
+            let mut arr = [0u8; 2];
+            arr.copy_from_slice(&slice);
+            CipherSuite(arr)
+        }
+    }
+    pub const TLS_AES_128_GCM_SHA256: CipherSuite = CipherSuite([0x13, 0x01]);
+    pub const TLS_AES_256_GCM_SHA384: CipherSuite = CipherSuite([0x13, 0x02]);
+    pub const TLS_CHACHA20_POLY1305_SHA256: CipherSuite = CipherSuite([0x13, 0x03]);
+    pub const TLS_AES_128_CCM_SHA256: CipherSuite = CipherSuite([0x13, 0x04]);
+    pub const TLS_AES_128_CCM_8_SHA256: CipherSuite = CipherSuite([0x13, 0x05]);
+    /// Pretty print the cipher suite
+    impl std::fmt::Display for CipherSuite {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self.0 {
+                [0x13, 0x01] => write!(f, "[0x13, 0x01] TLS_AES_128_GCM_SHA256"),
+                [0x13, 0x02] => write!(f, "[0x13, 0x02] TLS_AES_256_GCM_SHA384"),
+                [0x13, 0x03] => write!(f, "[0x13, 0x03] TLS_CHACHA20_POLY1305_SHA256"),
+                [0x13, 0x04] => write!(f, "[0x13, 0x04] TLS_AES_128_CCM_SHA256"),
+                [0x13, 0x05] => write!(f, "[0x13, 0x05] TLS_AES_128_CCM_8_SHA256"),
+                e => write!(f, "Unknown Cipher Suite: {e:?}"),
+            }
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -93,7 +125,7 @@ impl ByteSerializable for Handshake {
             e => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Invalid handshake type: {e:?}"),
+                    format!("Invalid or unimplemented handshake type: {e:?}"),
                 ))
             }
         };
@@ -142,16 +174,10 @@ pub struct Finished {
 }
 impl ByteSerializable for Finished {
     fn as_bytes(&self) -> Option<Vec<u8>> {
-        let mut bytes = Vec::new();
-        match u8::try_from(self.verify_data.len()) {
-            Ok(len) => bytes.push(len),
-            Err(_) => return None,
-        }
-        bytes.extend_from_slice(&self.verify_data);
-        Some(bytes)
+        todo!("Implement Finished::as_bytes")
     }
     fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+        todo!("Implement Finished::from_bytes")
     }
 }
 
@@ -162,10 +188,10 @@ impl ByteSerializable for Finished {
 ///       (See Appendix D for details about backward compatibility.)
 #[derive(Debug, Clone)]
 pub struct ClientHello {
-    pub legacy_version: ProtocolVersion, // 2 bytes to represent
-    pub random: Random,                  // Static 32 bytes, no length prefix
-    pub legacy_session_id: Vec<u8>,      // length of the data can be 0..32 (1 byte to present)
-    pub cipher_suites: Vec<cipher_suites::CipherSuite>, // length of the data can be 2..2^16-2 (2 bytes)
+    pub legacy_version: ProtocolVersion,     // 2 bytes to represent
+    pub random: Random,                      // Static 32 bytes, no length prefix
+    pub legacy_session_id: Vec<u8>,          // length of the data can be 0..32 (1 byte to present)
+    pub cipher_suites: Vec<CipherSuite>,     // length of the data can be 2..2^16-2 (2 bytes)
     pub legacy_compression_methods: Vec<u8>, // length of the data can be 1..2^8-1 (1 byte)
     pub extensions: Vec<Extension>, // length of the data can be 8..2^16-1 (2 bytes to present)
 }
@@ -188,31 +214,28 @@ impl ClientHello {
     }
     fn cipher_suites_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        let len_ciphers: usize = self.cipher_suites.iter().fold(0, |acc, x| acc + x.len());
+        let len_ciphers: usize = self.cipher_suites.iter().fold(0, |acc, _x| acc + 2);
         #[allow(clippy::cast_possible_truncation)]
         bytes.extend_from_slice((len_ciphers as u16).to_be_bytes().as_ref());
         for cipher_suite in &self.cipher_suites {
-            bytes.extend_from_slice(cipher_suite);
+            bytes.extend_from_slice(cipher_suite.as_ref());
         }
         bytes
     }
+
+    #[allow(clippy::unused_self)]
     fn compression_methods_bytes(&self) -> Vec<u8> {
         vec![0x01, 0x00] // TLS 1.3 does not support compression
     }
     fn extensions_bytes(&self) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
+        let mut ext_bytes = Vec::new();
         for extension in &self.extensions {
-            bytes.extend(extension.as_bytes()?);
+            ext_bytes.extend(extension.as_bytes()?);
         }
         // 2 byte length determinant for `extensions`
-        bytes.splice(
-            0..0,
-            u16::try_from(bytes.len())
-                .ok()?
-                .to_be_bytes()
-                .iter()
-                .copied(),
-        );
+        bytes.extend(u16::try_from(ext_bytes.len()).ok()?.to_be_bytes());
+        bytes.extend(ext_bytes);
         Some(bytes)
     }
 }
@@ -230,7 +253,7 @@ impl ByteSerializable for ClientHello {
     }
 
     fn from_bytes(_bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        todo!()
+        todo!("Implement ClientHello::from_bytes")
     }
 }
 
@@ -240,53 +263,54 @@ pub struct ServerHello {
     pub legacy_version: ProtocolVersion,
     pub random: Random,
     pub legacy_session_id_echo: Vec<u8>, // length of the data can be 0..32
-    pub cipher_suite: cipher_suites::CipherSuite,
+    pub cipher_suite: CipherSuite,
     pub legacy_compression_method: u8,
     pub extensions: Vec<Extension>, // length of the data can be 6..2^16-1 (2 bytes to present)
 }
 impl ByteSerializable for ServerHello {
     fn as_bytes(&self) -> Option<Vec<u8>> {
-        todo!()
+        let mut bytes = Vec::new();
+        bytes.extend(self.legacy_version.to_be_bytes().iter());
+        bytes.extend(self.random.iter());
+        bytes.push(u8::try_from(self.legacy_session_id_echo.len()).ok()?);
+        bytes.extend(self.legacy_session_id_echo.iter());
+        bytes.extend(self.cipher_suite.as_ref());
+        bytes.push(self.legacy_compression_method);
+        let mut ext_bytes = Vec::new();
+        for extension in &self.extensions {
+            ext_bytes.extend(extension.as_bytes()?);
+        }
+        bytes.extend(u16::try_from(ext_bytes.len()).ok()?.to_be_bytes());
+        bytes.extend(ext_bytes);
+        Some(bytes)
     }
     fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
+        let checksum;
+        #[cfg(debug_assertions)]
+        {
+            checksum = bytes.deque.clone();
+        }
+
         let legacy_version = bytes.get_u16().ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Invalid ServerHello legacy version",
             )
         })?;
-        let random: Random = bytes
-            .get_bytes(32)
-            .ok_or_else(ByteParser::insufficient_data)?
-            .try_into()
-            .map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Invalid ServerHello random",
-                )
-            })?;
+        let random: Random = bytes.get_bytes(32).try_into().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid ServerHello random",
+            )
+        })?;
         let session_id_length = bytes.get_u8().ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Invalid ServerHello session id length",
             )
         })?;
-        let session_id = bytes.get_bytes(session_id_length as usize).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid ServerHello session id",
-            )
-        })?;
-        let cipher_suite: CipherSuite = bytes
-            .get_bytes(2)
-            .ok_or_else(ByteParser::insufficient_data)?
-            .try_into()
-            .map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Invalid ServerHello cipher suite",
-                )
-            })?;
+        let session_id = bytes.get_bytes(session_id_length as usize);
+        let cipher_suite: CipherSuite = bytes.get_bytes(2).into();
         let compression_method = bytes.get_u8().ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -300,27 +324,28 @@ impl ByteSerializable for ServerHello {
             )
         })?;
         let mut extensions = Vec::new();
-        let extension_bytes = bytes.get_bytes(extension_length as usize).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid ServerHello extension bytes",
-            )
-        })?;
+        let extension_bytes = bytes.get_bytes(extension_length as usize);
         let mut ext_parser = ByteParser::new(VecDeque::from(extension_bytes));
 
         while !ext_parser.deque.is_empty() {
-            let extension = Extension::from_bytes(&mut ext_parser)?;
+            let extension = Extension::from_bytes(&mut ext_parser, ExtensionOrigin::Server)?;
             extensions.push(*extension);
         }
 
-        Ok(Box::from(ServerHello {
+        let server_hello = Box::from(ServerHello {
             legacy_version,
             random,
             legacy_session_id_echo: session_id,
             cipher_suite,
             legacy_compression_method: compression_method,
             extensions,
-        }))
+        });
+        // Helper to identify that decoded bytes are encoded back to the same bytes
+        #[cfg(debug_assertions)]
+        {
+            assert_eq!(checksum, server_hello.as_bytes().unwrap());
+        }
+        Ok(server_hello)
     }
 }
 
