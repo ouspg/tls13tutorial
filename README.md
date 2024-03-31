@@ -1,6 +1,7 @@
 # TLS 1.3 protocol implementation in Rust
 
-This is an educational project to learn about the TLS 1.3 protocol and the general challenges of implementing
+This is an educational, partially incomplete project to learn about the TLS 1.3 protocol and the general challenges of
+implementing
 binary-level
 network protocols.
 
@@ -19,6 +20,7 @@ functional tests for them and integrate fuzzing straight from the beginning.
 Most of the data structures and their encoders have been provided. The logic to implement the complete handshake, error
 checking
 and decoding is left mostly for the student.
+Error checking is already in good level, with some intentional flaws.
 
 The project currently supports:
 
@@ -77,7 +79,7 @@ You can use the `RUST_LOG` environment variable to change the logging level. (on
 To run with debug level and install dependencies, just
 
 ```shell
-RUST_LOG=info cargo run cloudflare.com:443
+RUST_LOG=debug cargo run cloudflare.com:443
 ```
 
 This will do a partial TLS 1.3 handshake with cloudflare.com
@@ -99,7 +101,7 @@ As a result, the following output log can be seen:
 RUST_BACKTRACE=1 RUST_LOG=info cargo run cloudflare.com:443
     Finished dev [unoptimized + debuginfo] target(s) in 0.02s
      Running `target/debug/tls13tutorial 'cloudflare.com:443'`
-[INFO  tls13tutorial] Successfully connected to the server 'cloudflare.com:443'.
+     [INFO  tls13tutorial] Successfully connected to the server 'cloudflare.com:443'.
 [INFO  tls13tutorial] Sending ClientHello as follows...
 
 ClientHello, Length=163
@@ -120,9 +122,24 @@ ClientHello, Length=163
       data: 00020807
     extension_type=key_share(51), length=38
       data: 0024001D00208F40C5ADB68F25624AE5B214EA767A6EC94D829D3D7B5E1AD1BA6F3E2138285F
+
+[INFO  tls13tutorial] The handshake request has been sent...
+[INFO  tls13tutorial] Received 1448 bytes of data.
+[INFO  tls13tutorial] Received 1724 bytes of data.
+[INFO  tls13tutorial] Response TLS Record received!
+[INFO  tls13tutorial] Response TLS Record received!
+[INFO  tls13tutorial] Response TLS Record received!
+[INFO  tls13tutorial] Response TLS Record received!
+[INFO  tls13tutorial] ServerHello message: ServerHello { legacy_version: 771, random: [169, 217, 208, 239, 149, 24, 213, 231, 132, 210, 235, 68, 75, 141, 242, 92, 239, 74, 79, 118, 237, 108, 111, 93, 25, 95, 50, 61, 29, 2, 80, 14], legacy_session_id_echo: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31], cipher_suite: CipherSuite([19, 3]), legacy_compression_method: 0, extensions: [Extension { origin: Server, extension_type: KeyShare, extension_data: Unserialized([0, 29, 0, 32, 7, 76, 95, 86, 68, 123, 126, 243, 199, 19, 16, 66, 3, 141, 58, 133, 178, 8, 117, 33, 2, 209, 26, 85, 35, 103, 112, 213, 53, 126, 112, 17]) }, Extension { origin: Server, extension_type: SupportedVersions, extension_data: Unserialized([3, 4]) }] }
+[WARN  tls13tutorial] TODO: Implement the server hello message processing, and decoding of the rest of the extensions
+[ERROR tls13tutorial] Unexpected response type: ChangeCipherSpec
+[INFO  tls13tutorial] Application data received, size of : 3010
+[WARN  tls13tutorial] TODO: Decryption of the data and decoding of the all extensions not implemented
+[INFO  tls13tutorial] Application data received, size of : 19
+[WARN  tls13tutorial] TODO: Decryption of the data and decoding of the all extensions not implemented
 ```
 
-Since the server gets all the required information from the initial `ServerHello` request, it can start sending
+Since the server gets all the required information from the initial `ClientHello` request, it can start sending
 encrypted `ApplicationData`, which contains encrypted extensions and certificates.
 
 **The first steps to continue with the project are:**
@@ -136,13 +153,14 @@ encrypted `ApplicationData`, which contains encrypted extensions and certificate
         * Calculate the transcript hash
         * Use `key_schedule` function to calculate the keys and use the keys afterward.
         * Implement decrypting function for `CHACHA20_POLY1305_SHA256`. You can
-          use [this](https://docs.rs/chacha20poly1305/latest/chacha20poly1305/) dependency (already in project). Not the
-          use of sequence counter.
+          use [this](https://docs.rs/chacha20poly1305/latest/chacha20poly1305/) dependency (already in project). Note
+          the use of sequence counter!
         * Now you can decrypt and continue finishing the handshake process until the server provides session tickets,
           and go as far as you like.
 
 You can also see the documentation of this project in browser.
 Run `cargo doc --open`.
+Documentation and `Display` formatting pull requests are welcome - might even give some points.
 
 ## Type-Length-Value (TLV) pattern
 
@@ -250,7 +268,7 @@ for example, what is the output format when the `println!()` macro is used for t
 
 ## Fuzzing the project
 
-If you are using a Linux or MacOS machine for development, starting fuzz testing with precise control is very
+If you are using a Linux or macOS machine for development, starting fuzz testing with precise control is very
 straightforward.
 There are many fuzzing libraries, that can be integrated to the project to get coverage-guided fuzzing.
 
@@ -266,7 +284,7 @@ As one fuzzing target, TLS `Alert` protocol is used as an example.
 See [project](https://github.com/rust-fuzz/cargo-fuzz) and
 its [documentation](https://rust-fuzz.github.io/book/cargo-fuzz/tutorial.html).
 
-You need to use a Linux or MacOS environment with `nightly` compiler for that.
+You need to use a Linux or macOS environment with `nightly` compiler for that.
 
 To start fuzzing, simply run
 
@@ -285,10 +303,10 @@ Data is mostly encrypted after these, but you can still see TLS Records with `Ap
 the inner
 content is encrypted.
 
-You can also see real packets by using OpenSSL.
+You can also see real, decrypted packets by using OpenSSL.
 
 ```shell
-openssl genpkey -algorithm X25519 -out custom_key.pem # Generate X25519 negotiation key
+openssl genpkey -algorithm X25519 -out debug_key.pem # Generate X25519 negotiation key
 
 openssl s_client -connect cloudflare.com:443 -tls1_3 \
                  -keylogfile secrets.log \
