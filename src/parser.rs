@@ -62,8 +62,7 @@ impl ByteParser {
     }
 }
 
-/// Allow initializing Parser from a slice of bytes
-/// E.g. `let parser = Parser::from(&[0x01, 0x02, 0x03]);`
+/// Allow initializing Parser from a vector of bytes
 impl From<Vec<u8>> for ByteParser {
     fn from(bytes: Vec<u8>) -> Self {
         Self {
@@ -71,6 +70,8 @@ impl From<Vec<u8>> for ByteParser {
         }
     }
 }
+/// Allow initializing Parser from a slice of bytes
+/// E.g. `let parser = Parser::from(&[0x01, 0x02, 0x03]);`
 impl From<&[u8]> for ByteParser {
     fn from(bytes: &[u8]) -> Self {
         Self {

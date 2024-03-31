@@ -20,7 +20,7 @@ functional tests for them and integrate fuzzing straight from the beginning.
 Most of the data structures and their encoders have been provided. The logic to implement the complete handshake, error
 checking
 and decoding is left mostly for the student.
-Error checking is already in good level, with some intentional flaws.
+Error checking is already at a good level, with some intentional flaws.
 
 The project currently supports:
 
@@ -28,7 +28,7 @@ The project currently supports:
 * Key exchange with `X25519` and signatures with EdDSA (Elliptic Curve Diffie-Hellman key exchange using Curve25519 and
   Edwards-Curve Digital Signature Algorithm based on the same curve)
 
-Credits for Michael Driscoll about his excellent [TLS 1.3 illustration](https://tls13.xargs.org/).
+Credits to Michael Driscoll for his excellent [TLS 1.3 illustration](https://tls13.xargs.org/).
 
 ## Quickstart for Rust
 
@@ -93,7 +93,7 @@ message and convert it into raw bytes with correct length determinants.
 
 It also implements minimal data structures and decoders to parse the first TLS Record from the server response, which
 includes the `ServerHello` message. However, extensions are not parsed to correct structures.
-They are left on purpose to give somewhat easy starting point.
+They are left on purpose to give a somewhat easy starting point.
 
 As a result, the following output log can be seen:
 
@@ -144,23 +144,23 @@ encrypted `ApplicationData`, which contains encrypted extensions and certificate
 
 **The first steps to continue with the project are:**
 
-* Implement decoders for missing required extensions to fully construct the extension types. Currently, extensions types
-  are identified but their inner data is left unparsed.
+* Implement decoders for missing required extensions to fully construct the extension types.
+Currently, extensions types are identified but their inner data is left unparsed.
 * After that, you need to construct all the traffic keys for decrypting the rest of the handshake data.
   Check [illustration](https://tls13.xargs.org/#server-handshake-keys-calc).
     * Key Derivation functions are pre-implemented. You need to:
-        * Parse server's public key and add it to `HandshakeKeys` structure
+        * Parse the server's public key and add it to the `HandshakeKeys` structure
         * Calculate the transcript hash
-        * Use `key_schedule` function to calculate the keys and use the keys afterward.
+        * Use the `key_schedule` function to calculate the keys and use the keys afterward.
         * Implement decrypting function for `CHACHA20_POLY1305_SHA256`. You can
-          use [this](https://docs.rs/chacha20poly1305/latest/chacha20poly1305/) dependency (already in project). Note
-          the use of sequence counter!
+          use [this](https://docs.rs/chacha20poly1305/latest/chacha20poly1305/) dependency (already in the project). Note
+          the use of a sequence counter!
         * Now you can decrypt and continue finishing the handshake process until the server provides session tickets,
           and go as far as you like.
 
-You can also see the documentation of this project in browser.
+You can also see the documentation of this project in the browser.
 Run `cargo doc --open`.
-Documentation and `Display` formatting pull requests are welcome - might even give some points.
+Documentation and `Display` formatting pull requests are welcome - and might even give some points.
 
 ## Type-Length-Value (TLV) pattern
 
@@ -175,7 +175,7 @@ so-called [Record Protocol](https://datatracker.ietf.org/doc/html/rfc8446#sectio
 It wraps the higher-level protocols, by following the idea of TLV.
 To see that in practice, we can take a look at the TLS
 Record [ASN.1 definition](https://datatracker.ietf.org/doc/html/rfc8446#appendix-B.1) and `TLSRecord` as an example
-for Rust data structure:
+of Rust data structure:
 
 ```rust
 pub type ProtocolVersion = u16;
@@ -203,8 +203,8 @@ pub struct TLSRecord {
 
 In the context of binary encoding, everything must have a size.
 The data should be possible to deserialize to the original structure based on the byte stream only.
-If we want to serialize the structure of `TLSPlaintext` into bytes, we go in order every field and create the byte
-presentation.
+If we want to serialize the structure of `TLSRecord` into bytes, we go in order every field and create the byte
+presentation, as the TLS standard defines.
 
 * A record field takes 1 byte to present as the max value for `ContentType` is defined to be 255 (`u8`). In this case,
   the
@@ -217,9 +217,10 @@ presentation.
 * The length of the `fragment` is presented with 2 bytes. Here it has a separate field, but that is not always the case
   and
   byte arrays with dynamic size should have always a length determinant.
-* `fragment` is an array of bytes with a size `length` based on the length of the previous.
+* `fragment` is an array of bytes with a total size `length` based on the length of the previous.
 
-TLS Record protocol has the plaintext version and ciphertext version.
+TLS Record protocol has the plaintext version and ciphertext version, depending on the content type and the stage when a
+record is being used.
 
 ## Basics of implementing the decoders
 
@@ -231,14 +232,15 @@ clone the remaining data in the memory.
 From a learning point of view, it can be better than parsing traditional vectors or byte slices.
 
 It provides methods such as `drain` or `pop_front` to consume parts from the buffer in the correct order.
-This is useful, for example, if we want to implement a decoder for specific type. We consume as many bytes as needed to
+This is useful, for example, if we want to implement a decoder for a specific type. We consume as many bytes as needed to
 construct the object, and the leftover data is still in the original buffer, waiting to construct the follow-up object.
 
 You can try to parse raw byte slices, but be warned about bugs! `VecDeque` can also panic with incorrect index usage.
 
 > [!Note]
 > There is already an abstraction for `VecDeque` to reduce the repetition of code in [parser.rs](src/parser.rs). You are
-> free to improve this further. There can be (intentional) bugs already.
+> free to improve this further. There can be (intentional) bugs already. However, by using `Option` type, we already
+> note the most of the possible errors what can appear when extracting data from buffer.
 
 ## Functional testing (positive and negative)
 
@@ -270,7 +272,7 @@ for example, what is the output format when the `println!()` macro is used for t
 
 If you are using a Linux or macOS machine for development, starting fuzz testing with precise control is very
 straightforward.
-There are many fuzzing libraries, that can be integrated to the project to get coverage-guided fuzzing.
+There are many fuzzing libraries, that can be integrated into the project to get coverage-guided fuzzing.
 
 Fuzzing provides the stream of bytes for the interface you choose, and depending on the used backend, it will provide
 testing data and coverage-guided mutation to test the robustness of the selected functionality.
@@ -278,13 +280,13 @@ testing data and coverage-guided mutation to test the robustness of the selected
 * [libfuzzer with `cargo-fuzz`](https://github.com/rust-fuzz/libfuzzer)
 * [libAFL](https://github.com/AFLplusplus/LibAFL)
 
-In [fuzzing directory](fuzz), `cargo fuzz` is pre-configured.
-As one fuzzing target, TLS `Alert` protocol is used as an example.
+In the [fuzzing directory](fuzz), the `cargo fuzz` is pre-configured.
+As one fuzzing target, the `TLS Alert` protocol is used as an example.
 
-See [project](https://github.com/rust-fuzz/cargo-fuzz) and
+See [the project](https://github.com/rust-fuzz/cargo-fuzz) and
 its [documentation](https://rust-fuzz.github.io/book/cargo-fuzz/tutorial.html).
 
-You need to use a Linux or macOS environment with `nightly` compiler for that.
+You need to use a Linux or macOS environment with a `nightly` compiler for that.
 
 To start fuzzing, simply run
 
@@ -292,7 +294,7 @@ To start fuzzing, simply run
 cargo fuzz run fuzz_target_1
 ```
 
-The project has dual target - see [src/lib.rs](src/lib.rs) which can be used as interface for fuzzing (you can import
+The project has a dual target - see [src/lib.rs](src/lib.rs) which can be used as an interface for fuzzing (you can import
 everything defined in there to fuzz target).
 Modify as needed. You can already directly import other data structures for fuzzing.
 
@@ -317,6 +319,6 @@ openssl s_client -connect cloudflare.com:443 -tls1_3 \
                  -trace -nocommands -tlsextdebug
 ```
 
-You can see the handshake data in `messages.log` file as unencrypted.
+You can see the handshake data in the `messages.log` file as unencrypted.
 
-Traffic secrets are in `secrets.log` file.
+Traffic secrets are in the `secrets.log` file.

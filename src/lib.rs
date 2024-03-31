@@ -33,7 +33,8 @@ pub fn get_records(buffer: VecDeque<u8>) -> Result<Vec<TLSRecord>, io::Error> {
                 records.push(*response);
             }
             Err(e) => {
-                error!("Failed to receive the response: {e}");
+                error!("Failed to receive a valid TLS Record: {e}");
+                return Err(e);
             }
         }
     }
