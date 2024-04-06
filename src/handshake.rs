@@ -286,7 +286,8 @@ impl ByteSerializable for ServerHello {
         Some(bytes)
     }
     fn from_bytes(bytes: &mut ByteParser) -> std::io::Result<Box<Self>> {
-        let checksum;
+        #[allow(unused)]
+        let checksum: VecDeque<u8>;
         #[cfg(debug_assertions)]
         {
             checksum = bytes.deque.clone();

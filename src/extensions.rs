@@ -356,14 +356,7 @@ impl ByteSerializable for SupportedSignatureAlgorithms {
             bytes.extend_from_slice(&signature_scheme.as_bytes()?);
         }
         // 2 byte length determinant for the whole `SupportedSignatureAlgorithms`
-        bytes.splice(
-            0..0,
-            u16::try_from(bytes.len())
-                .ok()?
-                .to_be_bytes()
-                .iter()
-                .copied(),
-        );
+        bytes.splice(0..0, u16::try_from(bytes.len()).ok()?.to_be_bytes());
         Some(bytes)
     }
 

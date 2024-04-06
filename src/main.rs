@@ -66,7 +66,7 @@ impl HandshakeKeys {
         #[cfg(not(debug_assertions))]
         {
             dh_client_ephemeral_secret = StaticSecret::random_from_rng(OsRng);
-            let dh_client_public = PublicKey::from(&dh_client_ephemeral_secret);
+            dh_client_public = PublicKey::from(&dh_client_ephemeral_secret);
         }
         #[cfg(debug_assertions)]
         {
